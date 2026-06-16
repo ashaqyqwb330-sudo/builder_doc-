@@ -11,7 +11,11 @@ import com.example.data.database.TemplateEntity
 import com.example.data.repository.SmartMonitorRepository
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.BufferedReader
+import java.io.InputStreamReader
 
 class SmartMonitorViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -88,11 +92,30 @@ class SmartMonitorViewModel(application: Application) : AndroidViewModel(applica
 
     val watchOutputPath = MutableStateFlow(prefs.getString("watch_output_path", "") ?: "")
 
+    // Custom path navigation state variables
+    val customWorkspacePath = MutableStateFlow(prefs.getString("custom_workspace_path", repository.getWorkspaceDirectory().absolutePath) ?: repository.getWorkspaceDirectory().absolutePath)
+
     // Cumulative clipboard monitoring state variables
     val isCumulativeClipboardEnabled = MutableStateFlow(prefs.getBoolean("cumulative_clip_enabled", false))
     val cumulativeClipboardBuffer = MutableStateFlow("")
 
+    // Python Plugins state variables
+    data class PythonPlugin(
+        val name: String,
+        val file: File,
+        val isAutoRunAtStartup: Boolean = false,
+        val isRunning: Boolean = false,
+        val lastOutput: String = ""
+    )
+    val pythonPlugins = MutableStateFlow<List<PythonPlugin>>(emptyList())
+
     init {
+        // Read any custom saved workspace path to initialize the repository with it
+        val savedWorkspacePath = prefs.getString("custom_workspace_path", null)
+        if (savedWorkspacePath != null) {
+            repository.setWorkspaceDirectory(savedWorkspacePath)
+        }
+
         // Pre-populate some demo templates if database is empty
         viewModelScope.launch {
             repository.templates.first().let { current ->
@@ -114,6 +137,14 @@ class SmartMonitorViewModel(application: Application) : AndroidViewModel(applica
             // Auto resume folder watching if it was active
             if (prefs.getBoolean("watch_enabled", false)) {
                 startFolderWatching()
+            }
+
+            // Sync Python Plugins on Startup and Run authorized Auto-Run ones
+            try {
+                refreshPlugins()
+                runAutoPluginsOnStartup()
+            } catch(e: Exception) {
+                repository.log("❌ فشل تشغيل نظام الإضافات التلقائي: ${e.message}", "ERROR")
             }
         }
 
@@ -830,6 +861,197 @@ class SmartMonitorViewModel(application: Application) : AndroidViewModel(applica
             _extractedWebDirectives.value = emptyList()
             refreshWorkspaceFiles()
             speakEncouragingWord("تم حفظ ملفات الويب والأكواد البرمجية المحددة بنجاح فائق وتلقائي وتحت ظل الحماية البرمجية المباشرة!")
+        }
+    }
+
+    // --- Dynamic Python Plugins & Custom Directory Management System ---
+
+    fun refreshPlugins() {
+        val root = repository.getWorkspaceDirectory()
+        val pluginsDir = File(root, "plugins")
+        if (!pluginsDir.exists()) {
+            pluginsDir.mkdirs()
+            // Create a default demo Python plugin so that the directory has samples
+            val demo = File(pluginsDir, "demo_cleanup_plugin.py")
+            if (!demo.exists()) {
+                demo.writeText("""
+# -*- coding: utf-8 -*-
+import os
+import sys
+
+print("🟢 مرحبا بك من ملحق بايثون التلقائي الذكي!")
+print("⚙️ هذا الملحق يعمل تلقائياً لتوسيع ومتابعة مهام البناء.")
+
+workspace = os.getcwd()
+print(f"📁 مسار العمل النشط الحالي: {workspace}")
+
+# List files in workspace
+files = os.listdir(workspace)
+print(f"📦 الملفات المكتشفة في مجلد العمل النشط: {files}")
+
+# Show arguments python was called with
+print(f"📍 معطيات وسائط الفحص التشغيلي: {sys.argv}")
+print("🚀 تم إنهاء مهام الملحق بنجاح تام!")
+                """.trimIndent(), Charsets.UTF_8)
+            }
+        }
+
+        val items = mutableListOf<PythonPlugin>()
+        pluginsDir.listFiles()?.forEach { file ->
+            if (file.isFile && file.name.endsWith(".py", true)) {
+                val isAutoRun = prefs.getBoolean("plugin_autorun_${file.name}", true)
+                items.add(PythonPlugin(
+                    name = file.name,
+                    file = file,
+                    isAutoRunAtStartup = isAutoRun,
+                    isRunning = false,
+                    lastOutput = ""
+                ))
+            }
+        }
+        pythonPlugins.value = items
+    }
+
+    private fun runAutoPluginsOnStartup() {
+        val root = repository.getWorkspaceDirectory()
+        val pluginsDir = File(root, "plugins")
+        if (pluginsDir.exists() && pluginsDir.isDirectory) {
+            pluginsDir.listFiles()?.forEach { file ->
+                if (file.isFile && file.name.endsWith(".py", true)) {
+                    val isAutoRun = prefs.getBoolean("plugin_autorun_${file.name}", true)
+                    if (isAutoRun) {
+                        viewModelScope.launch(Dispatchers.IO) {
+                            runPythonPlugin(file.name)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun runPythonPlugin(pluginName: String) {
+        val plist = pythonPlugins.value.toMutableList()
+        val idx = plist.indexOfFirst { it.name == pluginName }
+        if (idx == -1) return
+        val p = plist[idx]
+
+        // Mark as running
+        plist[idx] = p.copy(isRunning = true, lastOutput = "جاري تشغيل الملحق الآن...\n")
+        pythonPlugins.value = plist
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val root = repository.getWorkspaceDirectory()
+            try {
+                repository.log("🐍 جاري تشغيل ملحق بايثون: ${p.name}...", "INFO")
+                val pb = ProcessBuilder("python", p.file.absolutePath)
+                pb.directory(root)
+                pb.redirectErrorStream(true)
+                val process = pb.start()
+                val reader = BufferedReader(InputStreamReader(process.inputStream, Charsets.UTF_8))
+                val output = StringBuilder()
+                var line: String?
+                while (reader.readLine().also { line = it } != null) {
+                    output.append(line).append("\n")
+                }
+                val exitCode = process.waitFor()
+                val fullOutput = output.toString()
+                withContext(Dispatchers.Main) {
+                    val updatedList = pythonPlugins.value.toMutableList()
+                    val targetIdx = updatedList.indexOfFirst { it.name == pluginName }
+                    if (targetIdx != -1) {
+                        updatedList[targetIdx] = updatedList[targetIdx].copy(
+                            isRunning = false,
+                            lastOutput = "رمز الخروج: $exitCode\n$fullOutput"
+                        )
+                        pythonPlugins.value = updatedList
+                    }
+                    repository.log("🐍 الملحق '${p.name}' انتهى بالرمز $exitCode.\nالمخرجات:\n$fullOutput", "SUCCESS")
+                }
+            } catch (e: Exception) {
+                // Try python3 fallback
+                try {
+                    val pb = ProcessBuilder("python3", p.file.absolutePath)
+                    pb.directory(root)
+                    pb.redirectErrorStream(true)
+                    val process = pb.start()
+                    val reader = BufferedReader(InputStreamReader(process.inputStream, Charsets.UTF_8))
+                    val output = StringBuilder()
+                    var line: String?
+                    while (reader.readLine().also { line = it } != null) {
+                        output.append(line).append("\n")
+                    }
+                    val exitCode = process.waitFor()
+                    val fullOutput = output.toString()
+                    withContext(Dispatchers.Main) {
+                        val updatedList = pythonPlugins.value.toMutableList()
+                        val targetIdx = updatedList.indexOfFirst { it.name == pluginName }
+                        if (targetIdx != -1) {
+                            updatedList[targetIdx] = updatedList[targetIdx].copy(
+                                isRunning = false,
+                                lastOutput = "رمز الخروج: $exitCode\n$fullOutput"
+                            )
+                            pythonPlugins.value = updatedList
+                        }
+                        repository.log("🐍 [python3] الملحق '${p.name}' حصد رمز الخروج $exitCode.\n$fullOutput", "SUCCESS")
+                    }
+                } catch (e2: Exception) {
+                    withContext(Dispatchers.Main) {
+                        val updatedList = pythonPlugins.value.toMutableList()
+                        val targetIdx = updatedList.indexOfFirst { it.name == pluginName }
+                        if (targetIdx != -1) {
+                            updatedList[targetIdx] = updatedList[targetIdx].copy(
+                                isRunning = false,
+                                lastOutput = "خطأ في التشغيل: ${e.message ?: "غير معروف"}\nتنبيه: تأكد من تثبيت بايثون ومدرجه بالبيئة لتشغيل الملحقات الحقيقية."
+                            )
+                            pythonPlugins.value = updatedList
+                        }
+                        repository.log("❌ فشل تشغيل ملحق بايثون '${p.name}' لعدم توفر مفسر بايثون بالبيئة المحاكاة: ${e.message}", "ERROR")
+                    }
+                }
+            }
+        }
+    }
+
+    fun togglePluginAutoRun(pluginName: String) {
+        val plist = pythonPlugins.value.toMutableList()
+        val idx = plist.indexOfFirst { it.name == pluginName }
+        if (idx == -1) return
+        val p = plist[idx]
+        val nextVal = !p.isAutoRunAtStartup
+
+        prefs.edit().putBoolean("plugin_autorun_$pluginName", nextVal).apply()
+        plist[idx] = p.copy(isAutoRunAtStartup = nextVal)
+        pythonPlugins.value = plist
+
+        viewModelScope.launch {
+            repository.log("⚙️ تم تعديل وضع التشغيل التلقائي للملحق $pluginName إلى: ${if (nextVal) "نشط ومفعل عند بدء التشغيل تلقائياً" else "متوقف"}", "INFO")
+        }
+    }
+
+    fun updateWorkspaceDirectory(newPath: String) {
+        val cleanPath = newPath.trim()
+        if (cleanPath.isBlank()) return
+        val fileTarget = File(cleanPath)
+        
+        try {
+            if (!fileTarget.exists()) {
+                fileTarget.mkdirs()
+            }
+            repository.setWorkspaceDirectory(cleanPath)
+            customWorkspacePath.value = cleanPath
+            prefs.edit().putString("custom_workspace_path", cleanPath).apply()
+            
+            refreshWorkspaceFiles()
+            refreshPlugins()
+            
+            viewModelScope.launch {
+                repository.log("🐾 تم تحويل مسار تصفح وبناء المشروع بنجاح إلى: $cleanPath", "SUCCESS")
+                speakEncouragingWord("أحسنت يا مهندس! تم تحديث مسار المشروع النشط بنجاح وبقوة مطلقة!")
+            }
+        } catch (e: Exception) {
+            viewModelScope.launch {
+                repository.log("❌ فشل تحويل مسار المشروع المخصص: ${e.message}", "ERROR")
+            }
         }
     }
 

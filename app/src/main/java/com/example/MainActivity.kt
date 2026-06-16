@@ -536,39 +536,126 @@ fun ExplorerTab(viewModel: SmartMonitorViewModel) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Workspace Directory Metadata Card
+        // Upgraded Custom File Browser & Path Navigator Card
+        val customPathByVM by viewModel.customWorkspacePath.collectAsStateWithLifecycle()
+        var typedPathInput by remember(customPathByVM) { mutableStateOf(customPathByVM) }
+
         Card(
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.2f)
-            )
+                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.15f)
+            ),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f))
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "📁 مجلد الحفظ والمحاكاة النشط:",
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    IconButton(onClick = { viewModel.refreshWorkspaceFiles() }) {
-                        Icon(Icons.Default.Refresh, "Refresh Files")
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Folder, 
+                            contentDescription = "Workspace Track",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "🐾 مسار المشروع النشط المخصص",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    IconButton(
+                        onClick = { 
+                            viewModel.refreshWorkspaceFiles() 
+                            viewModel.refreshPlugins()
+                        },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(Icons.Default.Refresh, "Refresh Files", modifier = Modifier.size(18.dp))
                     }
                 }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = typedPathInput,
+                        onValueChange = { typedPathInput = it },
+                        modifier = Modifier.weight(1f),
+                        label = { Text("📝 اكتب مسار المجلد لتصفحه") },
+                        textStyle = TextStyle(fontSize = 11.sp, fontFamily = FontFamily.Monospace),
+                        singleLine = true,
+                        trailingIcon = {
+                            if (typedPathInput.isNotBlank()) {
+                                IconButton(onClick = { typedPathInput = "" }) {
+                                    Icon(Icons.Default.Close, "Clear", modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+                    )
+                    Button(
+                        onClick = { viewModel.updateWorkspaceDirectory(typedPathInput) },
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.height(48.dp)
+                    ) {
+                        Text("انتقل", fontSize = 11.sp)
+                    }
+                }
+
+                // Quick Navigation Chips / Buttons
                 Text(
-                    text = viewModel.repository.getWorkspaceDirectory().absolutePath,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    text = "🧭 روابط انتقال سريعة للمسارات:",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val defaultSandboxPath = context.getExternalFilesDir(null)?.absolutePath + "/BuilderOutput"
+                    val appFilesPath = context.filesDir.absolutePath
+                    val systemRootPath = "/"
+                    val sdCardPath = "/storage/emulated/0"
+
+                    listOf(
+                        Triple("الافتراضي 🐾", defaultSandboxPath, Color(0xFF10B981)),
+                        Triple("النظام 📂", systemRootPath, Color(0xFFEF4444)),
+                        Triple("الذاكرة 📱", sdCardPath, Color(0xFFF59E0B)),
+                        Triple("الملفات 📦", appFilesPath, Color(0xFF3B82F6))
+                    ).forEach { (label, targetPath, chipColor) ->
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(chipColor.copy(alpha = 0.12f))
+                                .border(1.dp, if (customPathByVM == targetPath) chipColor else chipColor.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                                .clickable {
+                                    viewModel.updateWorkspaceDirectory(targetPath)
+                                }
+                                .padding(vertical = 6.dp, horizontal = 4.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = label,
+                                fontSize = 10.sp,
+                                fontWeight = if (customPathByVM == targetPath) FontWeight.Bold else FontWeight.Normal,
+                                color = if (customPathByVM == targetPath) chipColor else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -1280,6 +1367,197 @@ fun ConfigurationTab(viewModel: SmartMonitorViewModel) {
                         modifier = Modifier.align(Alignment.End)
                     ) {
                         Text("إدراج القالب")
+                    }
+                }
+            }
+        }
+
+        // --- SECTION 4: Python Plugins Dynamic Management Panel ---
+        val plugins by viewModel.pythonPlugins.collectAsStateWithLifecycle()
+
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.2f)
+            ),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.3f))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Build, 
+                            contentDescription = "Python Plugins", 
+                            tint = MaterialTheme.colorScheme.tertiary
+                        )
+                        Text(
+                            text = "🐍 نظام إضافات بايثون الذكي (Plugins):",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    IconButton(
+                        onClick = { viewModel.refreshPlugins() },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(Icons.Default.Refresh, "Refresh Plugins", modifier = Modifier.size(16.dp))
+                    }
+                }
+
+                Text(
+                    text = "يبحث النظام تلقائياً في مجلد 'plugins' عن ملفات بايثون (.py) ويقوم بتحميلها أو تشغيلها عند بدء التشغيل تلقائياً لتوسيع ومتابعة مهام البناء والترجمة.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                if (plugins.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp))
+                            .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+                            .padding(16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                "لم يعثر على أي إضافات نشطة داخل مجلد 'plugins' حالياً.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.outline,
+                                textAlign = TextAlign.Center
+                            )
+                            Button(
+                                onClick = { viewModel.refreshPlugins() },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+                            ) {
+                                Text("توليد وتحديث قائمة الإضافات الافتراضية", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                } else {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        plugins.forEach { plugin ->
+                            Card(
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surface
+                                ),
+                                border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant)
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text(
+                                                text = "🐍 ${plugin.name}",
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 12.sp,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                            Text(
+                                                text = "Path: plugins/${plugin.name}",
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 9.sp,
+                                                color = MaterialTheme.colorScheme.outline,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            if (plugin.isRunning) {
+                                                CircularProgressIndicator(
+                                                    modifier = Modifier.size(16.dp),
+                                                    strokeWidth = 2.dp,
+                                                    color = MaterialTheme.colorScheme.secondary
+                                                )
+                                                Text("جاري التشغيل...", fontSize = 10.sp, color = MaterialTheme.colorScheme.secondary)
+                                            } else {
+                                                IconButton(
+                                                    onClick = { viewModel.runPythonPlugin(plugin.name) },
+                                                    modifier = Modifier.size(28.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.PlayArrow,
+                                                        contentDescription = "Run Plugin",
+                                                        tint = Color(0xFF10B981),
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Checkbox(
+                                            checked = plugin.isAutoRunAtStartup,
+                                            onCheckedChange = { viewModel.togglePluginAutoRun(plugin.name) },
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                        Text(
+                                            text = "التشغيل والتحميل التلقائي عند بدء التطبيق",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+
+                                    if (plugin.lastOutput.isNotBlank()) {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .background(Color(0xFF0F172A), RoundedCornerShape(6.dp))
+                                                .padding(8.dp)
+                                        ) {
+                                            Text(
+                                                text = "📟 مخرجات طرفية الملحق:",
+                                                fontSize = 9.sp,
+                                                color = Color(0xFF38BDF8),
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = plugin.lastOutput,
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 10.sp,
+                                                color = Color(0xFFF8FAFC)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
