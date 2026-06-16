@@ -6,14 +6,21 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [TemplateEntity::class, PrefixPathEntity::class, LogEntity::class],
-    version = 1,
+    entities = [
+        TemplateEntity::class, 
+        PrefixPathEntity::class, 
+        LogEntity::class, 
+        ClipboardOperationEntity::class, 
+        FileRestoreState::class
+    ],
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun templateDao(): TemplateDao
     abstract fun prefixPathDao(): PrefixPathDao
     abstract fun logDao(): LogDao
+    abstract fun clipboardOperationDao(): ClipboardOperationDao
 
     companion object {
         @Volatile

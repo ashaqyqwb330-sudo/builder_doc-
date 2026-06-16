@@ -44,3 +44,27 @@ interface LogDao {
     @Query("DELETE FROM processing_logs")
     suspend fun clearLogs()
 }
+
+@Dao
+interface ClipboardOperationDao {
+    @Query("SELECT * FROM clipboard_operations ORDER BY timestamp DESC")
+    fun getAllOperations(): Flow<List<ClipboardOperationEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOperation(op: ClipboardOperationEntity): Long
+
+    @Query("DELETE FROM clipboard_operations WHERE id = :id")
+    suspend fun deleteOperationById(id: Int)
+
+    @Query("SELECT * FROM file_restore_states WHERE operationId = :opId")
+    suspend fun getRestoreStatesForOperation(opId: Int): List<FileRestoreState>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertRestoreStates(states: List<FileRestoreState>)
+
+    @Query("DELETE FROM file_restore_states WHERE operationId = :opId")
+    suspend fun deleteRestoreStatesForOperation(opId: Int)
+
+    @Query("SELECT * FROM clipboard_operations ORDER BY timestamp DESC LIMIT 1")
+    suspend fun getLastOperation(): ClipboardOperationEntity?
+}

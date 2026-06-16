@@ -27,3 +27,20 @@ data class LogEntity(
     val level: String, // "INFO", "SUCCESS", "WARN", "ERROR"
     val timestamp: Long = System.currentTimeMillis()
 )
+
+@Entity(tableName = "clipboard_operations")
+data class ClipboardOperationEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val timestamp: Long = System.currentTimeMillis(),
+    val rawText: String,
+    val status: String // "SUCCESS" or "FAILED"
+)
+
+@Entity(tableName = "file_restore_states")
+data class FileRestoreState(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val operationId: Int,
+    val relativePath: String,
+    val previousContent: String?, // null if file did not exist
+    val existedBefore: Boolean
+)

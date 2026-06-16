@@ -13,12 +13,14 @@ class SmartMonitorRepository(
     private val context: Context,
     private val templateDao: TemplateDao,
     private val prefixPathDao: PrefixPathDao,
-    private val logDao: LogDao
+    private val logDao: LogDao,
+    private val clipboardOperationDao: ClipboardOperationDao
 ) {
     // Flows from ROOM
     val templates: Flow<List<TemplateEntity>> = templateDao.getAllTemplates()
     val prefixPaths: Flow<List<PrefixPathEntity>> = prefixPathDao.getAllPrefixPaths()
     val logs: Flow<List<LogEntity>> = logDao.getAllLogs()
+    val clipboardOperations: Flow<List<ClipboardOperationEntity>> = clipboardOperationDao.getAllOperations()
 
     // Default Workspace directory in external files/sandbox (accessible on device)
     private var baseDir: File = File(context.getExternalFilesDir(null), "BuilderOutput").apply {
@@ -52,10 +54,50 @@ class SmartMonitorRepository(
 
     suspend fun clearLogs() = logDao.clearLogs()
 
+    suspend fun undoLastAction(): Boolean = withContext(Dispatchers.IO) {
+        val lastOp = clipboardOperationDao.getLastOperation() ?: run {
+            log("⚠️ لا توجد أي عمليات سابقة للتراجع عنها في السجل.", "WARN")
+            return@withContext false
+        }
+        
+        log("🔄 جاري التراجع عن العملية الأخيرة (مُعرّف: ${lastOp.id})...", "INFO")
+        val states = clipboardOperationDao.getRestoreStatesForOperation(lastOp.id)
+        
+        var restoredCount = 0
+        var deletedCount = 0
+        
+        for (state in states) {
+            val finalFile = File(baseDir, state.relativePath)
+            try {
+                if (state.existedBefore) {
+                    if (state.previousContent != null) {
+                        finalFile.parentFile?.mkdirs()
+                        finalFile.writeText(state.previousContent)
+                        restoredCount++
+                    }
+                } else {
+                    if (finalFile.exists()) {
+                        finalFile.delete()
+                        deletedCount++
+                    }
+                }
+            } catch (e: Exception) {
+                log("❌ فشل استعادة الملف ${state.relativePath}: ${e.message}", "ERROR")
+            }
+        }
+        
+        clipboardOperationDao.deleteRestoreStatesForOperation(lastOp.id)
+        clipboardOperationDao.deleteOperationById(lastOp.id)
+        
+        log("✅ [استرجاع الناجح] تم التراجع بنجاح! تم استعادة $restoredCount ملفات وحذف $deletedCount ملفات جديدة.", "SUCCESS")
+        true
+    }
+
     // --- Core Parsing Engine (Smart Monitor 5.9 Specifications) ---
     suspend fun processText(rawText: String, activePrefixes: List<String>): List<String> = withContext(Dispatchers.IO) {
         val results = mutableListOf<String>()
         val prefixes = if (activePrefixes.isEmpty()) listOf("@builder") else activePrefixes
+        val fileRestoreStates = mutableListOf<FileRestoreState>()
         
         // Fetch current active custom prefix configurations
         val prefixMap = mutableMapOf<String, PrefixPathEntity>()
@@ -99,6 +141,29 @@ class SmartMonitorRepository(
                     if (!exists()) mkdirs()
                 }
 
+                // Backup before change for Undo
+                try {
+                    val relativeFromBase = finalFile.relativeTo(baseDir).path.replace('\\', '/')
+                    if (fileRestoreStates.none { it.relativePath == relativeFromBase }) {
+                        val existedBefore = finalFile.exists()
+                        val prevContent = if (existedBefore) {
+                            try { finalFile.readText() } catch (e: Exception) { null }
+                        } else {
+                            null
+                        }
+                        fileRestoreStates.add(
+                            FileRestoreState(
+                                operationId = 0,
+                                relativePath = relativeFromBase,
+                                previousContent = prevContent,
+                                existedBefore = existedBefore
+                            )
+                        )
+                    }
+                } catch (e: Exception) {
+                    // Ignore background failure
+                }
+
                 try {
                     val append = block.mode.lowercase() in listOf("append", "a")
                     if (append) {
@@ -123,24 +188,14 @@ class SmartMonitorRepository(
             var templatesApplied = false
             // Collect the templates dynamically from Flow safely by retrieving a single snapshot
             val activeTemplates = mutableListOf<TemplateEntity>()
-            // Query templates directly if we can't block. We can do a quick suspend call but Room Flow is stream-only.
-            // Let's implement a direct query or resolve templates reactively. To make it extremely robust, 
-            // the repository can expose templates, or we can use standard template queries. Let's make sure 
-            // our process has access to active templates. For a clean implementation, let's query templates from Flow.
-            // But flows can be collected with take(1).
             var list: List<TemplateEntity> = emptyList()
             try {
-                // Safe lookup
                 templateDao.getAllTemplates()
             } catch (e: Exception) {
                 // Fallback
             }
             
-            // To ensure 100% thread safety without stalling, let's fetch active templates.
-            // We can retrieve active templates from database using room DAO. Let's write a direct suspend query if needed, 
-            // or collect from templateDao. Since we want immediate reply, let's collect the first emit of templates.
             kotlin.runCatching {
-                // Collect first item from templates flow
                 val flow = templateDao.getAllTemplates()
                 kotlinx.coroutines.withTimeoutOrNull(800) {
                     flow.collect {
@@ -164,6 +219,29 @@ class SmartMonitorRepository(
                     val finalFile = File(subDir, cleanPath)
                     finalFile.parentFile?.apply {
                         if (!exists()) mkdirs()
+                    }
+
+                    // Backup before change for Undo
+                    try {
+                        val relativeFromBase = finalFile.relativeTo(baseDir).path.replace('\\', '/')
+                        if (fileRestoreStates.none { it.relativePath == relativeFromBase }) {
+                            val existedBefore = finalFile.exists()
+                            val prevContent = if (existedBefore) {
+                                try { finalFile.readText() } catch (e: Exception) { null }
+                            } else {
+                                null
+                            }
+                            fileRestoreStates.add(
+                                FileRestoreState(
+                                    operationId = 0,
+                                    relativePath = relativeFromBase,
+                                    previousContent = prevContent,
+                                    existedBefore = existedBefore
+                                )
+                            )
+                        }
+                    } catch (e: Exception) {
+                        // ignore fail
                     }
 
                     try {
@@ -193,6 +271,24 @@ class SmartMonitorRepository(
                 results.add("ℹ️ لا توجد توجيهات ولا قوالب نشطة للتطبيق.")
             }
         }
+
+        // Save persistent block history log with full backup
+        if (fileRestoreStates.isNotEmpty()) {
+            try {
+                val opId = clipboardOperationDao.insertOperation(
+                    ClipboardOperationEntity(
+                        rawText = rawText,
+                        status = "SUCCESS"
+                    )
+                ).toInt()
+                val statesToSave = fileRestoreStates.map { it.copy(operationId = opId) }
+                clipboardOperationDao.insertRestoreStates(statesToSave)
+                log("💾 سجل التراجع: تم حفظ لقطة استعادة بنجاح (مُعرّف العملية: $opId).", "SUCCESS")
+            } catch (e: Exception) {
+                log("⚠️ فشل حفظ سجل استرداد العملية: ${e.message}", "WARN")
+            }
+        }
+
         results
     }
 

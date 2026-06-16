@@ -20,7 +20,8 @@ class SmartMonitorViewModel(application: Application) : AndroidViewModel(applica
         context = application,
         templateDao = db.templateDao(),
         prefixPathDao = db.prefixPathDao(),
-        logDao = db.logDao()
+        logDao = db.logDao(),
+        clipboardOperationDao = db.clipboardOperationDao()
     )
 
     // Prefix Settings
@@ -39,6 +40,9 @@ class SmartMonitorViewModel(application: Application) : AndroidViewModel(applica
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val logs = repository.logs
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val clipboardOperations = repository.clipboardOperations
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Active Tab state
@@ -165,13 +169,30 @@ class SmartMonitorViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
-    fun toggleClipboardMonitoring() {
+    fun toggleClipboardMonitoring(context: Context) {
         _isClipboardMonitoring.value = !_isClipboardMonitoring.value
+        val intent = android.content.Intent(context, com.example.service.ClipboardWatcherService::class.java)
         viewModelScope.launch {
             if (_isClipboardMonitoring.value) {
-                repository.log("▶️ بدء المراقبة النشطة للحافظة في الخلفية.", "INFO")
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+                repository.log("▶️ بدء المراقبة النشطة عبر خدمة الخلفية (Foreground Service).", "INFO")
             } else {
-                repository.log("⏸️ تم إيقاف مراقبة الحافظة.", "INFO")
+                context.stopService(intent)
+                repository.log("⏸️ تم إيقاف خدمة مراقبة الحافظة في الخلفية.", "INFO")
+                lastClipboardHash = 0
+            }
+        }
+    }
+
+    fun undoLastAction() {
+        viewModelScope.launch {
+            val success = repository.undoLastAction()
+            if (success) {
+                refreshWorkspaceFiles()
             }
         }
     }

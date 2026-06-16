@@ -112,7 +112,7 @@ fun SmartMonitorApp(viewModel: SmartMonitorViewModel = viewModel()) {
                                 color = if (isMonitoring) Color(0xFF15803D) else Color(0xFF334155),
                                 shape = RoundedCornerShape(16.dp)
                             )
-                            .clickable { viewModel.toggleClipboardMonitoring() }
+                            .clickable { viewModel.toggleClipboardMonitoring(context) }
                             .padding(horizontal = 10.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -194,6 +194,12 @@ fun SmartMonitorApp(viewModel: SmartMonitorViewModel = viewModel()) {
                 3 -> WebMergerTab(viewModel = viewModel)
                 4 -> ProjectCompanionTab(viewModel = viewModel)
             }
+
+            // Global floating in-app Console Overlay
+            ConsoleOverlay(
+                viewModel = viewModel,
+                modifier = Modifier.fillMaxSize()
+            )
         }
     }
 }
@@ -241,7 +247,7 @@ fun CompilerTab(viewModel: SmartMonitorViewModel) {
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
-                    onClick = { viewModel.toggleClipboardMonitoring() },
+                    onClick = { viewModel.toggleClipboardMonitoring(context) },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (isMonitoring) Color(0xFF15803D) else MaterialTheme.colorScheme.primary
                     )
@@ -1301,5 +1307,180 @@ fun LogLineView(log: LogEntity) {
             fontSize = 11.sp,
             modifier = Modifier.weight(1f)
         )
+    }
+}
+
+@Composable
+fun ConsoleOverlay(
+    viewModel: SmartMonitorViewModel,
+    modifier: Modifier = Modifier
+) {
+    var isExpanded by remember { mutableStateOf(false) }
+    val logs by viewModel.logs.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+
+    Box(
+        modifier = modifier.fillMaxSize()
+    ) {
+        if (!isExpanded) {
+            // Floating Console Toggle Button
+            FloatingActionButton(
+                onClick = { isExpanded = true },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(horizontal = 16.dp, vertical = 76.dp) // Offset vertically to not overlap bottom bar icons
+                    .testTag("floating_console_trigger"),
+                containerColor = Color(0xFF1E293B), // Sleek charcoal contrast
+                contentColor = Color.White
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = "Open Console",
+                        tint = Color(0xFF4ADE80),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text("الكونسول النشط", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                }
+            }
+        } else {
+            // Expanded Console Overlay Panel
+            Card(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(290.dp)
+                    .padding(horizontal = 12.dp, vertical = 12.dp)
+                    .clickable(enabled = false) {}, // prevent click-through
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFF0F172A) // Slate slate terminal canvas
+                ),
+                border = BorderStroke(1.dp, Color(0xFF334155))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(10.dp)
+                ) {
+                    // Header Area
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Build,
+                                contentDescription = "Terminal",
+                                tint = Color(0xFF4ADE80),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "شاشة مراقبة العمليات والحافظة النشطة",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                        }
+                        
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Undo Last Action button
+                            IconButton(
+                                onClick = { 
+                                    viewModel.undoLastAction() 
+                                    Toast.makeText(context, "جاري استعادة الحالة السابقة...", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .testTag("console_undo_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Undo Last Action",
+                                    tint = Color(0xFFF59E0B),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            
+                            // Clear logs
+                            IconButton(
+                                onClick = { viewModel.clearAllLogs() },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .testTag("console_clear_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Clear logs",
+                                    tint = Color(0xFFEF4444),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            
+                            // Close overlay button
+                            IconButton(
+                                onClick = { isExpanded = false },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .testTag("console_close_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Close overlay",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+                    
+                    Divider(
+                        color = Color(0xFF334155),
+                        thickness = 1.dp,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                    
+                    // Console Output Area
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .background(Color(0xFF030712), shape = RoundedCornerShape(6.dp))
+                            .padding(6.dp)
+                    ) {
+                        val consoleLogs = logs
+                        if (consoleLogs.isEmpty()) {
+                            Text(
+                                text = "لاشيء حالياً. قم بنسخ كود توجيهي ليتم معالجته وتوثيقه هنا مباشرة...",
+                                color = Color(0xFF64748B),
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.align(Alignment.Center)
+                            )
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                items(consoleLogs) { log ->
+                                    LogLineView(log = log)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
