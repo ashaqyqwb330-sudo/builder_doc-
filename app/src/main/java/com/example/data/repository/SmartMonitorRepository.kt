@@ -573,4 +573,103 @@ class SmartMonitorRepository(
         log("📁 اكتملت معالجة المجلد! تم تحديث/إنشاء ملفات لـ $count ملفاً من كتل التوجيهات.", "SUCCESS")
         count
     }
+
+    // --- V5.8 Offline Saved Web Page Helpers ---
+    fun resolveResourceFile(ref: String, resourceFolder: File): File? {
+        val cleanRef = ref.trim().substringBefore('?').substringBefore('#')
+        if (cleanRef.startsWith("http://") || cleanRef.startsWith("https://") || cleanRef.startsWith("//")) {
+            return null
+        }
+        
+        val parts = cleanRef.split('/', '\\').filter { it.isNotBlank() }
+        val cleanParts = java.util.Stack<String>()
+        for (part in parts) {
+            if (part == "..") {
+                if (!cleanParts.isEmpty()) {
+                    cleanParts.pop()
+                }
+            } else if (part != ".") {
+                cleanParts.push(part)
+            }
+        }
+        if (cleanParts.isEmpty()) return null
+        
+        val relativePath = cleanParts.joinToString(File.separator)
+        val possibleFile = File(resourceFolder, relativePath)
+        if (possibleFile.isFile) {
+            return possibleFile
+        }
+        
+        val nameOnly = cleanParts.peek()
+        val possibleNameOnlyFile = File(resourceFolder, nameOnly)
+        if (possibleNameOnlyFile.isFile) {
+            return possibleNameOnlyFile
+        }
+        
+        return null
+    }
+
+    fun mergeResourcesIntoHtml(htmlText: String, resourceFolder: File): String {
+        // Replace CSS style references
+        val cssRefRegex = Regex("""<link[^>]+href=["']([^"']+\.css[^"']*)["'][^>]*/?>""", RegexOption.IGNORE_CASE)
+        var merged = cssRefRegex.replace(htmlText) { matchResult ->
+            val href = matchResult.groupValues[1]
+            val file = resolveResourceFile(href, resourceFolder)
+            if (file != null && file.exists()) {
+                try {
+                    val content = file.readText(Charsets.UTF_8)
+                    "<style>\n$content\n</style>"
+                } catch (e: Exception) {
+                    matchResult.value
+                }
+            } else {
+                matchResult.value
+            }
+        }
+
+        // Replace scripts references
+        val jsRefRegex = Regex("""<script[^>]+src=["']([^"']+\.js[^"']*)["'][^>]*>\s*</script>|<script[^>]+src=["']([^"']+\.js[^"']*)["'][^>]*>""", RegexOption.IGNORE_CASE)
+        merged = jsRefRegex.replace(merged) { matchResult ->
+            val src = matchResult.groupValues.getOrNull(1)?.takeIf { it.isNotBlank() }
+                ?: matchResult.groupValues.getOrNull(2)?.takeIf { it.isNotBlank() }
+                ?: ""
+            val file = resolveResourceFile(src, resourceFolder)
+            if (file != null && file.exists()) {
+                try {
+                    val content = file.readText(Charsets.UTF_8)
+                    "<script>\n$content\n</script>"
+                } catch (e: Exception) {
+                    matchResult.value
+                }
+            } else {
+                matchResult.value
+            }
+        }
+        
+        val attribRegex = Regex("""\s*(?:integrity|crossorigin)=["'][^"']*["']""", RegexOption.IGNORE_CASE)
+        merged = attribRegex.replace(merged, "")
+
+        return merged
+    }
+
+    fun formatHtmlStringPublic(html: String): String = formatHtmlString(html)
+
+    fun parseDirectiveBlocksPublic(text: String, prefixes: List<String>): List<DirectBlock> = parseDirectiveBlocks(text, prefixes)
+
+    fun sanitizePathPublic(pathStr: String): String? = sanitizePath(pathStr, mutableListOf())
 }
+
+// Global Response Objects for V5.8 Web Saved Page Parser
+data class WebDirective(
+    val path: String,
+    val mode: String,
+    val content: String,
+    val prefix: String,
+    var isSelected: Boolean = true
+)
+
+data class WebPageMergeResult(
+    val mergedHtml: String,
+    val directives: List<WebDirective>,
+    val resourceFolder: String?
+)

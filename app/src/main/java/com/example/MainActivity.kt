@@ -325,6 +325,106 @@ fun CompilerTab(viewModel: SmartMonitorViewModel) {
             }
         }
 
+        // Cumulative Clipboard Accumulator Panel
+        val isCumulativeByPrefs by viewModel.isCumulativeClipboardEnabled.collectAsStateWithLifecycle()
+        val cumulativeBuffer by viewModel.cumulativeClipboardBuffer.collectAsStateWithLifecycle()
+
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.25f)
+            ),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.3f))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Checkbox(
+                            checked = isCumulativeByPrefs,
+                            onCheckedChange = { viewModel.toggleCumulativeClipboard() },
+                            modifier = Modifier.testTag("toggle_cumulative_clipboard")
+                        )
+                        Column {
+                            Text(
+                                text = "تفعيل المراقبة التراكمية الذكية (Accumulator)",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                text = "تجميع دُفعات الكود المتعاقبة دون الاستبدال (حل لمشاكل حد نسخ النظام)",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                if (isCumulativeByPrefs) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp))
+                            .padding(8.dp)
+                            .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+                    ) {
+                        Column {
+                            Text(
+                                text = "📥 حوض التراكم النشط:",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = if (cumulativeBuffer.isEmpty()) "الحوض فارغ حالياً. قم بنسخ فقرات برمجية تلو الأخرى لحشدها هنا تلقائياً..." 
+                                       else "الكود المتراكم: ${cumulativeBuffer.length} حرفاً | ${cumulativeBuffer.lines().size} سطراً",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                color = if (cumulativeBuffer.isEmpty()) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = { viewModel.processCumulativeClipboardBuffer() },
+                            modifier = Modifier.weight(1.5f).height(40.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary),
+                            enabled = cumulativeBuffer.isNotEmpty()
+                        ) {
+                            Icon(Icons.Default.Build, "Process Cumulative", modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("عالج الحزمة المتراكمة بالكامل", fontSize = 12.sp)
+                        }
+
+                        OutlinedButton(
+                            onClick = { viewModel.clearCumulativeClipboardBuffer() },
+                            modifier = Modifier.weight(1f).height(40.dp),
+                            enabled = cumulativeBuffer.isNotEmpty()
+                        ) {
+                            Icon(Icons.Default.Delete, "Clear", modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("مسح التراكم", fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+        }
+
         // Custom Rich Text Editor for pasting block code
         OutlinedTextField(
             value = editorText,
@@ -581,7 +681,9 @@ fun ExplorerTab(viewModel: SmartMonitorViewModel) {
                         FileNodeItem(
                             fileItem = file,
                             onPreview = { viewModel.previewFile(it) },
-                            onDelete = { viewModel.deleteWorkspaceFile(it) }
+                            onDelete = { viewModel.deleteWorkspaceFile(it) },
+                            onProcess = { viewModel.processDirectivesFromFile(it.relativePath) },
+                            onWebProcess = { viewModel.selectWebPageAndSwitchTab(it.relativePath) }
                         )
                     }
                 }
@@ -659,7 +761,9 @@ fun FileNodeItem(
     fileItem: FileItem,
     depth: Int = 0,
     onPreview: (FileItem) -> Unit,
-    onDelete: (FileItem) -> Unit
+    onDelete: (FileItem) -> Unit,
+    onProcess: ((FileItem) -> Unit)? = null,
+    onWebProcess: ((FileItem) -> Unit)? = null
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -710,16 +814,62 @@ fun FileNodeItem(
                     }
                 }
             }
-            IconButton(
-                onClick = { onDelete(fileItem) },
-                modifier = Modifier.size(28.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = "Delete Item",
-                    tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
-                    modifier = Modifier.size(16.dp)
-                )
+            if (!fileItem.isDirectory) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val isHtml = fileItem.name.endsWith(".html", true) || fileItem.name.endsWith(".htm", true)
+                    if (isHtml) {
+                        IconButton(
+                            onClick = { onWebProcess?.invoke(fileItem) },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Share, 
+                                contentDescription = "Merge Web Resources",
+                                tint = Color(0xFF0EA5E9),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+
+                    IconButton(
+                        onClick = { onProcess?.invoke(fileItem) },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow, 
+                            contentDescription = "Process Directives",
+                            tint = Color(0xFF10B981),
+                            modifier = Modifier.size(17.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = { onDelete(fileItem) },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Delete Item",
+                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            } else {
+                IconButton(
+                    onClick = { onDelete(fileItem) },
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "Delete Item",
+                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
             }
         }
         
@@ -729,7 +879,9 @@ fun FileNodeItem(
                     fileItem = child,
                     depth = depth + 1,
                     onPreview = onPreview,
-                    onDelete = onDelete
+                    onDelete = onDelete,
+                    onProcess = onProcess,
+                    onWebProcess = onWebProcess
                 )
             }
         }
@@ -743,6 +895,12 @@ fun ConfigurationTab(viewModel: SmartMonitorViewModel) {
     val prefixPaths by viewModel.prefixPaths.collectAsStateWithLifecycle()
     val rawPrefixString by viewModel.directivePrefixes.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    
+    val watchFolder by viewModel.watchFolder.collectAsStateWithLifecycle()
+    val watchExtensions by viewModel.watchExtensions.collectAsStateWithLifecycle()
+    val watchPrefix by viewModel.watchPrefix.collectAsStateWithLifecycle()
+    val watchOutputPath by viewModel.watchOutputPath.collectAsStateWithLifecycle()
+    val isFolderWatching by viewModel.isFolderWatching.collectAsStateWithLifecycle()
     
     var newTmplName by remember { mutableStateOf("") }
     var newTmplPath by remember { mutableStateOf("") }
@@ -849,6 +1007,134 @@ fun ConfigurationTab(viewModel: SmartMonitorViewModel) {
                             onSave = { newPath, isEnabled ->
                                 viewModel.addPrefixPath(prefix, newPath, isEnabled)
                             }
+                        )
+                    }
+                }
+            }
+        }
+
+        // --- Folder Watcher (Long-term Monitoring) Section (Version 5.7) ---
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+            ),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically, 
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh, 
+                        contentDescription = "Folder Watcher", 
+                        tint = if (isFolderWatching) Color(0xFF15803D) else MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "🔄 مراقبة مجلد (طويل الأمد):",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                color = if (isFolderWatching) Color(0xFFDCFCE7) else Color(0xFFF3F4F6),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = if (isFolderWatching) "نشط ومراقب 🟢" else "متوقف ⏸️",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isFolderWatching) Color(0xFF15803D) else Color(0xFF4B5563)
+                        )
+                    }
+                }
+
+                Text(
+                    text = "حدد مجلداً فرعياً أو مطلقاً ليقوم التطبيق بمراقبته كل ثانيتين في الخلفية. ستتم قفل ومعالجة أي ملف جديد يُضاف إليه تلقائياً دون تجميد الواجهة.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                OutlinedTextField(
+                    value = watchFolder,
+                    onValueChange = { viewModel.watchFolder.value = it },
+                    label = { Text("📁 مجلد المراقبة الفرعي أو المطلق") },
+                    placeholder = { Text("مثال: watcher_inputs") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    enabled = !isFolderWatching
+                )
+
+                OutlinedTextField(
+                    value = watchOutputPath,
+                    onValueChange = { viewModel.watchOutputPath.value = it },
+                    label = { Text("📁 مجلد تصدير المخرجات المخصص (اختياري)") },
+                    placeholder = { Text("مثال: watcher_outputs (اتركه فارغاً للافتراضي)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    enabled = !isFolderWatching
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = watchExtensions,
+                        onValueChange = { viewModel.watchExtensions.value = it },
+                        label = { Text("📝 امتدادات المراقبة") },
+                        placeholder = { Text("مثال: txt, py, html, md") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        enabled = !isFolderWatching
+                    )
+
+                    OutlinedTextField(
+                        value = watchPrefix,
+                        onValueChange = { viewModel.watchPrefix.value = it },
+                        label = { Text("🏷️ بادئة تصفية التوجيهات") },
+                        placeholder = { Text("مثال: @watcher") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        enabled = !isFolderWatching
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            if (isFolderWatching) {
+                                viewModel.stopFolderWatching()
+                            } else {
+                                viewModel.startFolderWatching()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isFolderWatching) Color(0xFFDC2626) else Color(0xFF15803D)
+                        )
+                    ) {
+                        Icon(
+                            imageVector = if (isFolderWatching) Icons.Default.Close else Icons.Default.PlayArrow,
+                            contentDescription = "Toggle folder watching"
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (isFolderWatching) "إيقاف المراقبة ⏹️" else "تشغيل ومراقبة المجلد ▶️",
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
                         )
                     }
                 }
@@ -1008,7 +1294,31 @@ fun WebMergerTab(viewModel: SmartMonitorViewModel) {
     val cssText by viewModel.cssInput.collectAsStateWithLifecycle()
     val jsText by viewModel.jsInput.collectAsStateWithLifecycle()
     val mergeResult by viewModel.webMergeResult.collectAsStateWithLifecycle()
+    
+    val fileMergeResult by viewModel.webPageFileMergeResult.collectAsStateWithLifecycle()
+    val extractedDirectives by viewModel.extractedWebDirectives.collectAsStateWithLifecycle()
+    val workspaceFiles by viewModel.workspaceFiles.collectAsStateWithLifecycle()
+    
     val context = LocalContext.current
+    var selectedFilePathInput by remember { mutableStateOf("") }
+    
+    // Find all HTML files inside workspace recursive
+    val htmlFilesList = remember(workspaceFiles) {
+        val list = mutableListOf<com.example.ui.viewmodel.FileItem>()
+        fun traverse(item: com.example.ui.viewmodel.FileItem) {
+            if (item.isDirectory) {
+                item.children.forEach { traverse(it) }
+            } else {
+                if (item.name.lowercase().endsWith(".html") || item.name.lowercase().endsWith(".htm")) {
+                    list.add(item)
+                }
+            }
+        }
+        workspaceFiles.forEach { traverse(it) }
+        list
+    }
+
+    var selectedModeTab by remember { mutableStateOf(0) } // 0: File-based, 1: Text-based manual
 
     Column(
         modifier = Modifier
@@ -1041,110 +1351,353 @@ fun WebMergerTab(viewModel: SmartMonitorViewModel) {
             }
         }
 
-        OutlinedTextField(
-            value = htmlText,
-            onValueChange = { viewModel.htmlInput.value = it },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(110.dp),
-            placeholder = { Text("أدخل ملف HTML الأساسي هنا...") },
-            label = { Text("كود الـ HTML") },
-            textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
-        )
-
-        OutlinedTextField(
-            value = cssText,
-            onValueChange = { viewModel.cssInput.value = it },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(100.dp),
-            placeholder = { Text("كود الـ CSS الخارجي لدمجه تلقائياً (مماثل لمحتويات ملف style.css)...") },
-            label = { Text("ملف الأنماط CSS خارجي (اختياري)") },
-            textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
-        )
-
-        OutlinedTextField(
-            value = jsText,
-            onValueChange = { viewModel.jsInput.value = it },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(100.dp),
-            placeholder = { Text("سكريبت JS لدمجه تلقائياً...") },
-            label = { Text("سكريبت JS خارجي (اختياري)") },
-            textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
-        )
-
+        // Horizontal toggle selection
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Button(
-                onClick = {
-                    // Load demo files
-                    viewModel.htmlInput.value = """
-                    <!DOCTYPE html>
-                    <html>
-                    <head>
-                        <title>Demo Watch App</title>
-                        <link rel="stylesheet" href="style.css">
-                    </head>
-                    <body>
-                        <h1>مرحباً بالتوجيه البرمجي المدمج</h1>
-                        <p>هذه صفحة تجريبية لدمج الموارد</p>
-                        <!-- @builder:file web_output/success.txt -->
-                        <!-- @builder:mode overwrite -->
-                        مرحبًا بك من كود توجيهات الويب المستخرج والمنسق!
-                        <!-- @builder:end -->
-                        <script src="script.js"></script>
-                    </body>
-                    </html>
-                    """.trimIndent()
-                    
-                    viewModel.cssInput.value = """
-                    body {
-                        background-color: #0f172a;
-                        color: white;
-                        font-family: sans-serif;
-                        padding: 20px;
-                    }
-                    h1 { color: #38bdf8; }
-                    """.trimIndent()
-                    viewModel.jsInput.value = "console.log('Daemon web merger is ready.');"
-                    Toast.makeText(context, "تم تحميل كود الويب التجريبي", Toast.LENGTH_SHORT).show()
-                },
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
-            ) {
-                Icon(Icons.Default.Done, "Load Demo")
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("تحميل كود تجريبي")
-            }
-
-            Button(
-                onClick = { viewModel.mergeOfflineWebPage() },
+                onClick = { selectedModeTab = 0 },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (selectedModeTab == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = if (selectedModeTab == 0) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                ),
                 modifier = Modifier.weight(1f)
             ) {
-                Icon(Icons.Default.Info, "Merge and prettify")
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("دمج وتنسيق الصفحة")
+                Text("🌐 معالجة ملف ويب محفوظ", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+            Button(
+                onClick = { selectedModeTab = 1 },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (selectedModeTab == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = if (selectedModeTab == 1) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                ),
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("📝 دمج يدوي بالنسخ واللصق", fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
         }
 
-        if (mergeResult.isNotBlank()) {
-            Text("الكود النهائي المدمج والمنسق:", fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(4.dp))
+
+        if (selectedModeTab == 0) {
+            // HTML File selector GUI
+            Text("اختر ملف HTML من مساحة العمل للمعالجة المتقدمة:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            
+            if (htmlFilesList.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                        .padding(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "لا توجد ملفات تفاعلية بتنسيق HTML في مساحة العمل حالياً. يرجى إنشاء أو استيراد ملف HTML أولاً.",
+                        color = Color(0xFF64748B),
+                        fontSize = 11.sp,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp), RoundedCornerShape(12.dp))
+                        .padding(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text("انقر لتحديد ملف HTML للتحليل الفوري دُفعة واحدة ومكافأة المطور إدريس:", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .horizontalScroll(rememberScrollState()),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        htmlFilesList.forEach { file ->
+                            val isSelected = selectedFilePathInput == file.relativePath
+                            Box(
+                                modifier = Modifier
+                                    .background(
+                                        if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                        RoundedCornerShape(8.dp)
+                                    )
+                                    .border(
+                                        1.dp,
+                                        if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                        RoundedCornerShape(8.dp)
+                                    )
+                                    .clickable { selectedFilePathInput = file.relativePath }
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(Icons.Default.Done, "HTML Icon", tint = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFF64748B), modifier = Modifier.size(12.dp))
+                                    Text(
+                                        text = file.name,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             OutlinedTextField(
-                value = mergeResult,
-                onValueChange = {},
-                readOnly = true,
+                value = selectedFilePathInput,
+                onValueChange = { selectedFilePathInput = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("أدخل مسار ملف HTML في مساحة العمل (مثال: my_page.html)...") },
+                label = { Text("مسار ملف HTML المختار") },
+                textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+            )
+
+            Button(
+                onClick = {
+                    if (selectedFilePathInput.isBlank()) {
+                        Toast.makeText(context, "الرجاء تحديد أو إدخال مسار ملف HTML أولاً!", Toast.LENGTH_SHORT).show()
+                    } else {
+                        viewModel.selectAndProcessWebPageFile(selectedFilePathInput)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.PlayArrow, "Process Web Page")
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("دمج وتنسيق صفحة الويب المحددة")
+            }
+
+            // Confirmation dialogue interface for version 5.8
+            if (fileMergeResult != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Card(
+                     colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                     border = BorderStroke(1.5.dp, Color(0xFF38BDF8)),
+                     modifier = Modifier.fillMaxWidth()
+                ) {
+                     Column(
+                         modifier = Modifier.padding(14.dp),
+                         verticalArrangement = Arrangement.spacedBy(10.dp)
+                     ) {
+                         Row(
+                             modifier = Modifier.fillMaxWidth(),
+                             horizontalArrangement = Arrangement.SpaceBetween,
+                             verticalAlignment = Alignment.CenterVertically
+                         ) {
+                             Text(
+                                 text = "📝 تأكيد استخراج وحفظ الكتل البرمجية المكتشفة",
+                                 fontWeight = FontWeight.Bold,
+                                 color = Color.White,
+                                 fontSize = 13.sp
+                             )
+                             Text(
+                                 text = "(@builder أو غيرها)",
+                                 fontSize = 10.sp,
+                                 color = Color(0xFF38BDF8)
+                             )
+                         }
+
+                         Text(
+                             text = "تم العثور على ${extractedDirectives.size} كتلة توجيهات برمجية قابلة للاستخراج من الصفحة الموصولة. مجلد الموارد المكتشف: ${fileMergeResult?.resourceFolder?.substringAfterLast('/') ?: "لا يوجد"}",
+                             fontSize = 11.sp,
+                             color = Color(0xFF94A3B8)
+                         )
+
+                         if (extractedDirectives.isEmpty()) {
+                             Text(
+                                 text = "⚠️ لم يتم اكتشاف أي توجيهات برمجية مسبقة بالملف. سيتم تصدير ملف HTML المدمج الموحد فقط عند الحفظ.",
+                                 color = Color(0xFFFBBF24),
+                                 fontSize = 11.sp,
+                                 fontWeight = FontWeight.Bold
+                             )
+                         } else {
+                             Column(
+                                 verticalArrangement = Arrangement.spacedBy(8.dp),
+                                 modifier = Modifier.fillMaxWidth()
+                             ) {
+                                 extractedDirectives.forEachIndexed { index, directive ->
+                                     Card(
+                                         colors = CardDefaults.cardColors(
+                                             containerColor = if (directive.isSelected) Color(0xFF1E293B) else Color(0xFF0F172A)
+                                         ),
+                                         border = BorderStroke(
+                                             1.dp,
+                                             if (directive.isSelected) Color(0xFF38BDF8) else Color(0xFF334155)
+                                         ),
+                                         modifier = Modifier
+                                             .fillMaxWidth()
+                                             .clickable { viewModel.toggleExtractedWebDirective(index) }
+                                     ) {
+                                         Row(
+                                             modifier = Modifier.padding(8.dp),
+                                             verticalAlignment = Alignment.CenterVertically,
+                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                         ) {
+                                             Checkbox(
+                                                 checked = directive.isSelected,
+                                                 onCheckedChange = { viewModel.toggleExtractedWebDirective(index) }
+                                             )
+                                             Column(modifier = Modifier.weight(1f)) {
+                                                 Text(
+                                                     text = "مسار الحفظ المنسق: ${directive.path}",
+                                                     color = Color.White,
+                                                     fontWeight = FontWeight.Bold,
+                                                     fontSize = 12.sp
+                                                 )
+                                                 Row(
+                                                     horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                                     modifier = Modifier.fillMaxWidth()
+                                                 ) {
+                                                     Text("البادئة: ${directive.prefix}", fontSize = 10.sp, color = Color(0xFF64748B))
+                                                     Text("الوضع: ${if (directive.mode == "a") "إلحاق (append)" else "كتابة جديدة (overwrite)"}", fontSize = 10.sp, color = Color(0xFF64748B))
+                                                     Text("الحجم: ${directive.content.length} حرفاً", fontSize = 10.sp, color = Color(0xFF38BDF8))
+                                                 }
+                                             }
+                                         }
+                                     }
+                                 }
+                             }
+                         }
+
+                         Row(
+                             modifier = Modifier.fillMaxWidth(),
+                             horizontalArrangement = Arrangement.spacedBy(8.dp)
+                         ) {
+                             Button(
+                                 onClick = { viewModel.cancelWebPageMerge() },
+                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                                 modifier = Modifier.weight(1f)
+                             ) {
+                                 Text("إلغاء العملية", color = Color.White, fontSize = 11.sp)
+                             }
+
+                             Button(
+                                 onClick = { viewModel.saveConfirmedWebDirectives() },
+                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                                 modifier = Modifier.weight(1f)
+                             ) {
+                                 Text("💾 تأكيد وحفظ البرمجيات المكتشفة", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                             }
+                         }
+                     }
+                }
+            }
+
+        } else {
+            // Existing Paste-based Text Merging
+            OutlinedTextField(
+                value = htmlText,
+                onValueChange = { viewModel.htmlInput.value = it },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(200.dp),
-                textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp),
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp)
-                )
+                    .height(110.dp),
+                placeholder = { Text("أدخل ملف HTML الأساسي هنا...") },
+                label = { Text("كود الـ HTML") },
+                textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
             )
+
+            OutlinedTextField(
+                value = cssText,
+                onValueChange = { viewModel.cssInput.value = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(100.dp),
+                placeholder = { Text("كود الـ CSS الخارجي لدمجه تلقائياً (مماثل لمحتويات ملف style.css)...") },
+                label = { Text("ملف الأنماط CSS خارجي (اختياري)") },
+                textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+            )
+
+            OutlinedTextField(
+                value = jsText,
+                onValueChange = { viewModel.jsInput.value = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(100.dp),
+                placeholder = { Text("سكريبت JS لدمجه تلقائياً...") },
+                label = { Text("سكريبت JS خارجي (اختياري)") },
+                textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = {
+                        // Load demo files
+                        viewModel.htmlInput.value = """
+                        <!DOCTYPE html>
+                        <html>
+                        <head>
+                            <title>Demo Watch App</title>
+                            <link rel="stylesheet" href="style.css">
+                        </head>
+                        <body>
+                            <h1>مرحباً بالتوجيه البرمجي المدمج</h1>
+                            <p>هذه صفحة تجريبية لدمج الموارد</p>
+                            <!-- @builder:file web_output/success.txt -->
+                            <!-- @builder:mode overwrite -->
+                            مرحبًا بك من كود توجيهات الويب المستخرج والمنسق!
+                            <!-- @builder:end -->
+                            <script src="script.js"></script>
+                        </body>
+                        </html>
+                        """.trimIndent()
+                        
+                        viewModel.cssInput.value = """
+                        body {
+                            background-color: #0f172a;
+                            color: white;
+                            font-family: sans-serif;
+                            padding: 20px;
+                        }
+                        h1 { color: #38bdf8; }
+                        """.trimIndent()
+                        viewModel.jsInput.value = "console.log('Daemon web merger is ready.');"
+                        Toast.makeText(context, "تم تحميل كود الويب التجريبي", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+                ) {
+                    Icon(Icons.Default.Done, "Load Demo")
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("تحميل كود تجريبي")
+                }
+
+                Button(
+                    onClick = { viewModel.mergeOfflineWebPage() },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.Info, "Merge and prettify")
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("دمج وتنسيق الصفحة")
+                }
+            }
+
+            if (mergeResult.isNotBlank()) {
+                Text("الكود النهائي المدمج والمنسق:", fontWeight = FontWeight.Bold)
+                OutlinedTextField(
+                    value = mergeResult,
+                    onValueChange = {},
+                    readOnly = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(200.dp),
+                    textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp),
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp)
+                    )
+                )
+            }
         }
     }
 }
@@ -1222,6 +1775,34 @@ fun ProjectCompanionTab(viewModel: SmartMonitorViewModel) {
                     Icon(Icons.Default.Share, "Copy pack")
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("نسخ الحزمة بالكامل")
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = { viewModel.savePackAsWorkspaceFile() },
+                    modifier = Modifier.weight(1f).height(40.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                ) {
+                    Icon(Icons.Default.Done, "Save File", modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("حفظ كملف مشروع", fontSize = 11.sp)
+                }
+
+                Button(
+                    onClick = {
+                        viewModel.setEditorText(packOutput)
+                        Toast.makeText(context, "تم إدخال الحزمة في المترجم المباشر بنجاح ويتم تحويلك الآن!", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.weight(1f).height(40.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+                ) {
+                    Icon(Icons.Default.Build, "Build", modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("تغذية المترجم المباشر", fontSize = 11.sp)
                 }
             }
             
