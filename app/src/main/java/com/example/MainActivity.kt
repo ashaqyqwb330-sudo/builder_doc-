@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -219,6 +220,9 @@ fun CompilerTab(viewModel: SmartMonitorViewModel) {
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        // Cheering and encouragement card featuring Developer Engineer Idris Yusuf Al-Madani
+        IdrisEncouragementCard(viewModel = viewModel)
+
         // Dashboard status indicators
         Card(
             colors = CardDefaults.cardColors(
@@ -745,10 +749,6 @@ fun ConfigurationTab(viewModel: SmartMonitorViewModel) {
     var newTmplPrefix by remember { mutableStateOf("@builder") }
     var newTmplMode by remember { mutableStateOf("w") } // "w" or "a"
 
-    // Prefix Path entry variables
-    var newPrefixName by remember { mutableStateOf("@custom") }
-    var newPrefixPath by remember { mutableStateOf("BuilderTest_C") }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -799,7 +799,7 @@ fun ConfigurationTab(viewModel: SmartMonitorViewModel) {
             }
         }
 
-        // Section 2: Dynamic Custom Prefixes Directories (Resolves Test 3.1)
+        // Section 2: Dynamic Custom Prefixes Directories (Resolves Test 3.1 & Dynamic Update Requirements)
         Card(
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
@@ -820,74 +820,36 @@ fun ConfigurationTab(viewModel: SmartMonitorViewModel) {
                     )
                 }
 
-                // Table of registered Prefix paths
-                if (prefixPaths.isEmpty()) {
+                Text(
+                    text = "يتم توليد حقول الإدخال أدناه تلقائياً لجميع البادئات المدرجة في الإعدادات أعلاه. استخدم صندوق الخيار لتشغيل المسار المخصص أو تعطيله.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+
+                if (rawPrefixString.isEmpty()) {
                     Text(
-                        text = "لا توجد مسارات مخصصة مسجلة حالياً.",
+                        text = "يرجى تحديد بادئة واحدة على الأقل في الإعدادات لإنشاء مسارات عمل مخصصة.",
                         color = MaterialTheme.colorScheme.outline,
                         fontSize = 11.sp,
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 12.dp)
                     )
                 } else {
-                    prefixPaths.forEach { pp ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.surface)
-                                .padding(8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column {
-                                Text(pp.prefix, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, fontSize = 13.sp)
-                                Text("المجلد: ${pp.customPath}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Switch(
-                                    checked = pp.enabled,
-                                    onCheckedChange = { viewModel.addPrefixPath(pp.prefix, pp.customPath, it) },
-                                    modifier = Modifier.scale(0.8f)
-                                )
-                                IconButton(onClick = { viewModel.deletePrefixPath(pp) }) {
-                                    Icon(Icons.Default.Delete, "Remove mapping", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
-                                }
-                            }
-                        }
-                    }
-                }
+                    rawPrefixString.forEach { prefix ->
+                        val existingEntity = prefixPaths.find { it.prefix == prefix }
+                        val initialPath = existingEntity?.customPath ?: ""
+                        val initialEnabled = existingEntity?.enabled ?: false
 
-                // Create custom Prefix Path Form
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                Text("إضافة بادئة ومجلد مخصص جديد:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        OutlinedTextField(
-                            value = newPrefixName,
-                            onValueChange = { newPrefixName = it },
-                            modifier = Modifier.weight(1f),
-                            label = { Text("البادئة (@watcher)") },
-                            singleLine = true
-                        )
-                        OutlinedTextField(
-                            value = newPrefixPath,
-                            onValueChange = { newPrefixPath = it },
-                            modifier = Modifier.weight(1f),
-                            label = { Text("المجلد المخصص") },
-                            singleLine = true
-                        )
-                    }
-                    Button(
-                        onClick = {
-                            if (newPrefixName.isNotBlank() && newPrefixPath.isNotBlank()) {
-                                viewModel.addPrefixPath(newPrefixName.trim(), newPrefixPath.trim(), true)
-                                Toast.makeText(context, "تم حفظ ربط البادئة بالمجلد المخصص", Toast.LENGTH_SHORT).show()
+                        PrefixPathRow(
+                            prefix = prefix,
+                            initialPath = initialPath,
+                            initialEnabled = initialEnabled,
+                            onSave = { newPath, isEnabled ->
+                                viewModel.addPrefixPath(prefix, newPath, isEnabled)
                             }
-                        },
-                        modifier = Modifier.align(Alignment.End)
-                    ) {
-                        Text("حفظ المسار المخصص")
+                        )
                     }
                 }
             }
@@ -1479,6 +1441,248 @@ fun ConsoleOverlay(
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PrefixPathRow(
+    prefix: String,
+    initialPath: String,
+    initialEnabled: Boolean,
+    onSave: (String, Boolean) -> Unit
+) {
+    var pathText by remember(prefix, initialPath) { mutableStateOf(initialPath) }
+    var isEnabled by remember(prefix, initialEnabled) { mutableStateOf(initialEnabled) }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        // Checkbox next to each path input to enable or disable its use
+        Checkbox(
+            checked = isEnabled,
+            onCheckedChange = { checked ->
+                isEnabled = checked
+                onSave(pathText, checked)
+            },
+            modifier = Modifier.testTag("checkbox_${prefix.replace("@", "")}")
+        )
+
+        // Prefix Label
+        Text(
+            text = prefix,
+            fontWeight = FontWeight.Bold,
+            color = if (isEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+            modifier = Modifier.width(80.dp),
+            fontSize = 13.sp
+        )
+
+        // Custom Path Input
+        OutlinedTextField(
+            value = pathText,
+            onValueChange = { newValue ->
+                pathText = newValue
+                onSave(newValue, isEnabled)
+            },
+            modifier = Modifier
+                .weight(1f)
+                .testTag("input_${prefix.replace("@", "")}"),
+            placeholder = { Text("المسار المخصص") },
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodyMedium,
+            enabled = isEnabled
+        )
+    }
+}
+
+@Composable
+fun IdrisEncouragementCard(
+    viewModel: SmartMonitorViewModel,
+    modifier: Modifier = Modifier
+) {
+    val quotes = listOf(
+        "«إن الهندسة ليست مجرد بناء كود، بل هي تجسيد للحلول الذكية التي تبسط حياة الناس وتسعدهم.»",
+        "«كل سطر برمجيات تكتبه اليوم هو لبنة في صرح غدٍ أفضل وأذكى. استمر في الشغف والابتكار!»",
+        "«المبرمجون هم مهندسو المستقبل الفعليين؛ كود اليوم هو واقع الغد. فلتجعل كودك نقياً ومبدعاً!»",
+        "«التراجع هو أمان الأقوياء، والتقدم هو درب المبتكرين. بيئتك البرمجية محمية دائماً بأقصى درجات الذكاء برعاية المطور إدريس!»",
+        "«لا تهابوا الأخطاء في الكود؛ فكل خطأ يتم حله هو خطوة للأمام نحو الاحتراف والتألق الهندسي الكامل.»"
+    )
+
+    var currentQuoteIndex by remember { mutableStateOf(0) }
+    val currentQuote = quotes[currentQuoteIndex]
+
+    // Breathing pulse animation for premium feel
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val cardColorAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.05f,
+        targetValue = 0.15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 3000, easing = androidx.compose.animation.core.LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "alpha"
+    )
+    val starScale by infiniteTransition.animateFloat(
+        initialValue = 0.9f,
+        targetValue = 1.15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1500, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "star"
+    )
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = cardColorAlpha)
+        ),
+        border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Header: Owner and branding
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Star,
+                        contentDescription = "Developer Badge",
+                        tint = Color(0xFFF59E0B), // Glowing golden star
+                        modifier = Modifier
+                            .size(24.dp)
+                            .scale(starScale)
+                    )
+                    Column {
+                        Text(
+                            text = "منصة المبتكر المطور 🔨",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "المهندس إدريس يوسف المداني",
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 14.sp,
+                            color = Color(0xFFB45309) // Deep Amber
+                        )
+                    }
+                }
+
+                // Decorative Badge
+                Box(
+                    modifier = Modifier
+                        .background(Color(0xFFFEF3C7), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = "محفّز ذكي ✨",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFD97706)
+                    )
+                }
+            }
+
+            // Beautiful Quote block
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
+                        RoundedCornerShape(10.dp)
+                    )
+                    .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp))
+                    .padding(12.dp)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = currentQuote,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontSize = 13.sp,
+                            lineHeight = 20.sp,
+                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+
+            // Audio & Encouragement triggers
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Speak Current Quote via TTS
+                Button(
+                    onClick = {
+                        val speechText = "$currentQuote . نصيحة من المطور والمهندس إدريس يوسف المداني"
+                        viewModel.speakEncouragingWord(speechText)
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(38.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFB45309) // Amber/Gold tone
+                    ),
+                    contentPadding = PaddingValues(horizontal = 8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = "Speak quote"
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("استمع للكلمة 🎤", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+
+                // Next Quote + speak
+                OutlinedButton(
+                    onClick = {
+                        currentQuoteIndex = (currentQuoteIndex + 1) % quotes.size
+                        val nextQuote = quotes[currentQuoteIndex]
+                        viewModel.speakEncouragingWord("إليك الهمة العالية: $nextQuote")
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(38.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.primary
+                    ),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                    contentPadding = PaddingValues(horizontal = 8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Favorite,
+                        contentDescription = "Next encouragement",
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("مقالة تشجيعية ✨", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }

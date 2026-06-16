@@ -23,6 +23,7 @@ class SmartMonitorViewModel(application: Application) : AndroidViewModel(applica
         logDao = db.logDao(),
         clipboardOperationDao = db.clipboardOperationDao()
     )
+    private var tts: android.speech.tts.TextToSpeech? = null
 
     // Prefix Settings
     private val _directivePrefixes = MutableStateFlow(listOf("@builder", "@watcher", "@deploy"))
@@ -95,6 +96,14 @@ class SmartMonitorViewModel(application: Application) : AndroidViewModel(applica
             refreshWorkspaceFiles()
             repository.log("📊 تم بدء نظام التشغيل والمراقبة بنجاح.", "INFO")
         }
+
+        // Initialize TextToSpeech engine
+        tts = android.speech.tts.TextToSpeech(application) { status ->
+            if (status == android.speech.tts.TextToSpeech.SUCCESS) {
+                tts?.language = java.util.Locale("ar")
+                speakEncouragingWord("أهلاً بك في تطبيق المراقب الذكي، يرحب بك المطور والمهندس إدريس يوسف المداني ويتمنى لك تجربة برمجية ممتعة ومميزة!")
+            }
+        }
     }
 
     fun setTab(index: Int) {
@@ -146,6 +155,9 @@ class SmartMonitorViewModel(application: Application) : AndroidViewModel(applica
         viewModelScope.launch {
             val results = repository.processText(text, _directivePrefixes.value)
             refreshWorkspaceFiles()
+            if (results.any { !it.contains("فشل") && !it.contains("لا توجد") }) {
+                speakEncouragingWord("تم معالجة التوجيهات وترتيبها في مجلدات العمل بنجاح ونقاء متميز! المطور إدريس يحيي همتكم العالية!")
+            }
         }
     }
 
@@ -160,6 +172,9 @@ class SmartMonitorViewModel(application: Application) : AndroidViewModel(applica
                     repository.log("📋 تم جلب النص من الحافظة تلقائياً (الطول: ${pasteText.length} حرفاً).", "INFO")
                     val results = repository.processText(pasteText, _directivePrefixes.value)
                     refreshWorkspaceFiles()
+                    if (results.any { !it.contains("فشل") && !it.contains("لا توجد") }) {
+                        speakEncouragingWord("تم استخراج التوجيهات وحزم العمل بنجاح وبسرعة فائقة! أحسنت يا مهندس المستقبل!")
+                    }
                 }
             } else {
                 viewModelScope.launch { repository.log("📋 الحافظة فارغة حالياً.", "WARN") }
@@ -193,6 +208,7 @@ class SmartMonitorViewModel(application: Application) : AndroidViewModel(applica
             val success = repository.undoLastAction()
             if (success) {
                 refreshWorkspaceFiles()
+                speakEncouragingWord("تم التراجع عن آخر عملية وحذف الملفات الدخيلة بنجاح. السلامة والأمان مضمون في بيئتك البرمجية!")
             }
         }
     }
@@ -407,6 +423,26 @@ class SmartMonitorViewModel(application: Application) : AndroidViewModel(applica
         viewModelScope.launch {
             repository.clearLogs()
             repository.log("🧹 تم تنظيف سجل الأحداث والمخرجات بنجاح.", "INFO")
+        }
+    }
+
+    fun speakEncouragingWord(text: String) {
+        viewModelScope.launch {
+            try {
+                tts?.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "encouragement_speech_id")
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        try {
+            tts?.stop()
+            tts?.shutdown()
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 }
