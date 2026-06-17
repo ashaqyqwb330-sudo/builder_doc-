@@ -6,6 +6,7 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application
         android:allowBackup="true"
@@ -32,6 +33,22 @@
             android:name=".service.ClipboardWatcherService"
             android:enabled="true"
             android:exported="false" />
+
+        <service
+            android:name=".service.FloatingBubbleService"
+            android:enabled="true"
+            android:exported="false" />
+
+        <service
+            android:name=".service.QuickSettingsTileService"
+            android:icon="@android:drawable/ic_menu_search"
+            android:label="المراقب الذكي"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
     </application>
 
 </manifest>

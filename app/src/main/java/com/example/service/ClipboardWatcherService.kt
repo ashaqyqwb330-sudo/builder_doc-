@@ -62,13 +62,32 @@ class ClipboardWatcherService : Service() {
                 lastTextHash = text.hashCode()
                 scope.launch {
                     val activePrefixes = listOf("@builder", "@watcher", "@deploy")
-                    if (ClipboardParserUtil.containsDirectives(text, activePrefixes)) {
+                    val isDir = ClipboardParserUtil.containsDirectives(text, activePrefixes)
+                    showStatusNotification(text, isDir)
+                    if (isDir) {
                         repository.log("🛎️ خدمة الخلفية: كشف كُود توجيهي في الحافظة!", "INFO")
                         repository.processText(text, activePrefixes)
                     }
                 }
             }
         }
+    }
+
+    private fun showStatusNotification(text: String, isDirective: Boolean) {
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val title = if (isDirective) "🚀 كشف كود توجيهي نشط!" else "📋 تم نسخ نص ومزامنة التحقق!"
+        val content = if (text.length > 55) "${text.take(55)}..." else text
+        
+        val notification = NotificationCompat.Builder(this, ALERT_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle(title)
+            .setContentText(content)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setAutoCancel(true)
+            .build()
+            
+        notificationManager.notify(ALERT_NOTIFICATION_ID, notification)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -85,6 +104,8 @@ class ClipboardWatcherService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager = getSystemService(NotificationManager::class.java) ?: return
+            
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Clipboard Monitor Channel",
@@ -92,8 +113,16 @@ class ClipboardWatcherService : Service() {
             ).apply {
                 description = "Channel for background clipboard monitoring service"
             }
-            val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
+
+            val alertChannel = NotificationChannel(
+                ALERT_CHANNEL_ID,
+                "إشعارات تأكيد المنسوخ الفورية",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "تأكيد نسخ النصوص للتحليل والمصادقة الأمنية لمهام البناء المسرعة"
+            }
+            manager.createNotificationChannel(alertChannel)
         }
     }
 
@@ -115,6 +144,8 @@ class ClipboardWatcherService : Service() {
     companion object {
         private const val NOTIFICATION_ID = 101
         private const val CHANNEL_ID = "clipboard_monitor_channel"
+        private const val ALERT_CHANNEL_ID = "clipboard_alert_channel"
+        private const val ALERT_NOTIFICATION_ID = 102
         private var lastTextHash = 0
     }
 }

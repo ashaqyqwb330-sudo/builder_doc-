@@ -38,6 +38,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.database.PrefixPathEntity
 import com.example.data.database.TemplateEntity
 import com.example.data.database.LogEntity
+import android.provider.Settings
+import android.net.Uri
+import android.content.Intent
+import com.example.service.FloatingBubbleService
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.viewmodel.FileItem
 import com.example.ui.viewmodel.SmartMonitorViewModel
@@ -536,6 +540,210 @@ fun ExplorerTab(viewModel: SmartMonitorViewModel) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        // Dynamic Storage Permission & Shielding System Handler
+        var hasStoragePermission by remember { mutableStateOf(viewModel.hasFullStoragePermission(context)) }
+        
+        // Re-check whenever the view updates or refresh is triggered
+        LaunchedEffect(Unit) {
+            hasStoragePermission = viewModel.hasFullStoragePermission(context)
+        }
+
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = if (hasStoragePermission) Color(0xFFE0F2FE).copy(alpha = 0.5f) else Color(0xFFFEF2F2).copy(alpha = 0.6f)
+            ),
+            border = BorderStroke(1.dp, if (hasStoragePermission) Color(0xFF38BDF8).copy(alpha = 0.5f) else Color(0xFFF87171).copy(alpha = 0.5f))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = if (hasStoragePermission) Icons.Default.CheckCircle else Icons.Default.Warning,
+                    contentDescription = "Permission Status",
+                    tint = if (hasStoragePermission) Color(0xFF0284C7) else Color(0xFFDC2626),
+                    modifier = Modifier.size(22.dp)
+                )
+                
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (hasStoragePermission) "🛡️ صلاحيات الوصول لنظام الملفات مُكتمِلة" else "⚠️ صلاحيات تصفح نظام الملفات غير مفعّلة!",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (hasStoragePermission) Color(0xFF0369A1) else Color(0xFF991B1B)
+                    )
+                    Text(
+                        text = if (hasStoragePermission) 
+                            "يمتلك واجهي نظام الملفات والتنبؤات حقاً كاملاً لتصفح وكتابة المجلدات بأمان ضد العطب." 
+                            else "لتصفح كافة المسارات والملفات بمرونة تامة (بما فيها مسارات النظام)، يرجى منح الإذن.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (hasStoragePermission) Color(0xFF0C4A6E) else Color(0xFF7F1D1D)
+                    )
+                }
+
+                if (!hasStoragePermission) {
+                    Button(
+                        onClick = {
+                            viewModel.requestFullStoragePermission(context)
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.height(34.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                    ) {
+                        Text("منح الوصول الكلي", fontSize = 9.sp, color = Color.White)
+                    }
+                } else {
+                    OutlinedButton(
+                        onClick = {
+                            viewModel.requestFullStoragePermission(context)
+                        },
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.height(34.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                    ) {
+                        Text("إعادة ضبط", fontSize = 9.sp)
+                    }
+                }
+            }
+        }
+
+        // --- Floating Bubble Control Manager Card ---
+        var canDrawOverlays by remember { 
+            mutableStateOf(if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                Settings.canDrawOverlays(context)
+            } else {
+                true
+            })
+        }
+
+        // Recheck when expanded or entered
+        LaunchedEffect(Unit) {
+            canDrawOverlays = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                Settings.canDrawOverlays(context)
+            } else {
+                true
+            }
+        }
+
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.15f)
+            ),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.25f))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Face, 
+                            contentDescription = "Floating Assistant",
+                            tint = MaterialTheme.colorScheme.secondary
+                        )
+                        Text(
+                            text = "💭 مُساعد الفقاعة العائمة الذكية",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    
+                    Text(
+                        text = if (canDrawOverlays) "مصرّح 🛡️" else "غير مصرّح ⚠️",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (canDrawOverlays) Color(0xFF10B981) else Color(0xFFEF4444)
+                    )
+                }
+
+                Text(
+                    text = "تقرأ الحافظة ومستجدات البناء صوتياً فورياً، وتسهل الوصول للمهام المسرعة بنقرة واحدة من أي مكان على شاشتك خارج التطبيق.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (!canDrawOverlays) {
+                        Button(
+                            onClick = {
+                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                                    try {
+                                        val intent = Intent(
+                                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                            Uri.parse("package:${context.packageName}")
+                                        )
+                                        context.startActivity(intent)
+                                    } catch (e: Exception) {
+                                        val fallbackIntent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+                                        context.startActivity(fallbackIntent)
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                            modifier = Modifier.weight(1f).height(40.dp),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("منح إذن الظهور فوق التطبيقات", fontSize = 10.sp, color = Color.White)
+                        }
+                    } else {
+                        Button(
+                            onClick = {
+                                try {
+                                    val intent = Intent(context, FloatingBubbleService::class.java)
+                                    context.startService(intent)
+                                    Toast.makeText(context, "🟢 تم تفعيل الفقاعة العائمة وجاري التثبيت بنجاح!", Toast.LENGTH_SHORT).show()
+                                } catch (e: Exception) {
+                                    Toast.makeText(context, "فشل بدء الفقاعة: ${e.message}", Toast.LENGTH_LONG).show()
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                            modifier = Modifier.weight(1f).height(40.dp),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("تشغيل المساعد العائم", fontSize = 11.sp)
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                try {
+                                    val intent = Intent(context, FloatingBubbleService::class.java)
+                                    context.stopService(intent)
+                                    Toast.makeText(context, "🛑 تم إيقاف وإغلاق المساعد العائم.", Toast.LENGTH_SHORT).show()
+                                } catch (e: Exception) {
+                                    Toast.makeText(context, "خطأ: ${e.message}", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            modifier = Modifier.weight(1f).height(40.dp),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(Icons.Default.Close, null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("تعطيل المساعد", fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+        }
+
         // Upgraded Custom File Browser & Path Navigator Card
         val customPathByVM by viewModel.customWorkspacePath.collectAsStateWithLifecycle()
         var typedPathInput by remember(customPathByVM) { mutableStateOf(customPathByVM) }
@@ -2097,6 +2305,323 @@ fun ProjectCompanionTab(viewModel: SmartMonitorViewModel) {
                     unfocusedContainerColor = Color(0xFF0F1728)
                 )
             )
+        }
+
+        // -----------------------------------------------------------------
+        // 🎧 COMPANION AUDIO CENTRE & ZAMIL MANAGER CODE (Integrated Audio Feature)
+        // -----------------------------------------------------------------
+        Spacer(modifier = Modifier.height(18.dp))
+        
+        val tracks by viewModel.musicTracks.collectAsStateWithLifecycle()
+        val currentTrack by viewModel.currentPlayingTrack.collectAsStateWithLifecycle()
+        val isPlaying by viewModel.isMusicPlaying.collectAsStateWithLifecycle()
+        val playbackPos by viewModel.musicPlaybackPosition.collectAsStateWithLifecycle()
+        val playbackDuration by viewModel.musicPlaybackDuration.collectAsStateWithLifecycle()
+        val isLoopActive by viewModel.isMusicLoopActive.collectAsStateWithLifecycle()
+        val volume by viewModel.musicVolume.collectAsStateWithLifecycle()
+        val isMuted by viewModel.isMuted.collectAsStateWithLifecycle()
+        val waves by viewModel.visualizerWaves.collectAsStateWithLifecycle()
+
+        Card(
+            modifier = Modifier.fillMaxWidth().testTag("zamil_music_player_card"),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.08f)
+            ),
+            border = BorderStroke(1.2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Title
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Zamil App",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = "🎧 مشغل زوامل وأدلة التخطيط الميداني",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                    }
+                    IconButton(
+                        onClick = { 
+                            viewModel.refreshMusicTracks() 
+                            Toast.makeText(context, "🔄 تم تحديث قائمة المسارات بنجاح!", Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Refresh list",
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+
+                Text(
+                    text = "تشغيل النغمات التخطيطية والزوامل العسكرية بتناغم هندسي متناسق وموجات تفاعلية لتنشيط همة البناء والمبرمجين.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                // Playlist Column
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                            RoundedCornerShape(8.dp)
+                        )
+                        .padding(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    if (tracks.isEmpty()) {
+                        Text(
+                            text = "لا توجد ملفات صوتية للتخطيط برمجياً حالياً.",
+                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    } else {
+                        tracks.forEach { track ->
+                            val isThisTrackPlaying = currentTrack?.fileName == track.fileName
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(
+                                        if (isThisTrackPlaying) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                        else Color.Transparent
+                                    )
+                                    .clickable {
+                                        if (isThisTrackPlaying && isPlaying) {
+                                            viewModel.pauseTrack()
+                                        } else if (isThisTrackPlaying) {
+                                            viewModel.resumeTrack()
+                                        } else {
+                                            viewModel.playTrack(track)
+                                        }
+                                    }
+                                    .padding(vertical = 10.dp, horizontal = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = if (isThisTrackPlaying && isPlaying) Icons.Default.PlayArrow else Icons.Default.PlayArrow,
+                                        contentDescription = "Track",
+                                        tint = if (isThisTrackPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Text(
+                                        text = track.name,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = if (isThisTrackPlaying) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (isThisTrackPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                if (track.isSimulation) {
+                                    Text(
+                                        text = "تلقين صوتي 💡",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.secondary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                } else {
+                                    Text(
+                                        text = "صوت حي 🔊",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color(0xFF10B981),
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // If a track is active, show the master control panel
+                currentTrack?.let { activeTrack ->
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                    // Wave visualizer
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .background(Color(0xFF0F172A), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        waves.forEach { waveHeight ->
+                            Box(
+                                modifier = Modifier
+                                    .width(4.dp)
+                                    .fillMaxHeight(if (isPlaying) waveHeight else 0.15f)
+                                    .background(
+                                        brush = androidx.compose.ui.graphics.Brush.verticalGradient(
+                                            colors = listOf(
+                                                MaterialTheme.colorScheme.primary,
+                                                MaterialTheme.colorScheme.secondary
+                                            )
+                                        ),
+                                        shape = RoundedCornerShape(2.dp)
+                                    )
+                            )
+                        }
+                    }
+
+                    // Lyrics/Prompter scrolling subtitles
+                    val activeLyric = viewModel.getLyricForTrackAndSecond(activeTrack.name, playbackPos)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.15f),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .border(
+                                1.dp,
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .padding(10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Text(
+                                text = "🗣️ توجيه وتلقين المعلم المبرمج إدريس:",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "« $activeLyric »",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+
+                    // Progress Seeker Slider
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Slider(
+                            value = playbackPos.toFloat(),
+                            onValueChange = { viewModel.seekTo(it.toInt()) },
+                            valueRange = 0f..playbackDuration.toFloat().coerceAtLeast(1f),
+                            colors = SliderDefaults.colors(
+                                thumbColor = MaterialTheme.colorScheme.primary,
+                                activeTrackColor = MaterialTheme.colorScheme.primary
+                            ),
+                            modifier = Modifier.height(28.dp)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = String.format("%02d:%02d", playbackPos / 60, playbackPos % 60),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = String.format("%02d:%02d", playbackDuration / 60, playbackDuration % 60),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    // Control Buttons (Previous, Play/Pause/Stop, Next, Loop, Mute)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = { 
+                                viewModel.toggleLoop()
+                                Toast.makeText(context, if (!isLoopActive) "🔁 تم تفعيل وضع التكرار المستمر" else "🔁 تم إلغاء وضع التكرار", Toast.LENGTH_SHORT).show()
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Loop track",
+                                tint = if (isLoopActive) MaterialTheme.colorScheme.primary else Color.Gray,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        IconButton(
+                            onClick = { viewModel.stopTrack() }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Stop",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        // Giant Play/Pause Button
+                        FloatingActionButton(
+                            onClick = {
+                                if (isPlaying) viewModel.pauseTrack() else viewModel.resumeTrack()
+                            },
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(46.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = "PlayPause",
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+
+                        IconButton(
+                            onClick = { 
+                                viewModel.toggleMute()
+                                Toast.makeText(context, if (!isMuted) "🔇 تم كتم الصوت" else "🔊 تم إلغاء الكتم", Toast.LENGTH_SHORT).show()
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Share,
+                                contentDescription = "Mute Toggle Alternative",
+                                tint = if (isMuted) Color.Red else MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }

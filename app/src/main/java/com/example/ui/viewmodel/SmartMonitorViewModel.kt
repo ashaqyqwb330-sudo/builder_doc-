@@ -3,6 +3,14 @@ package com.example.ui.viewmodel
 import android.app.Application
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import android.os.Build
+import android.os.Environment
+import androidx.core.content.ContextCompat
+import android.content.pm.PackageManager
+import android.Manifest
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.AppDatabase
@@ -13,6 +21,8 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
+import android.media.MediaPlayer
 import java.io.File
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -109,12 +119,36 @@ class SmartMonitorViewModel(application: Application) : AndroidViewModel(applica
     )
     val pythonPlugins = MutableStateFlow<List<PythonPlugin>>(emptyList())
 
+    // --- Evidence Music & Zamil Player System States ---
+    data class AudioTrack(
+        val name: String,
+        val fileName: String,
+        val isAsset: Boolean = false,
+        val absolutePath: String = "",
+        val isSimulation: Boolean = false
+    )
+
+    val musicTracks = MutableStateFlow<List<AudioTrack>>(emptyList())
+    val currentPlayingTrack = MutableStateFlow<AudioTrack?>(null)
+    val isMusicPlaying = MutableStateFlow(false)
+    val musicPlaybackPosition = MutableStateFlow(0) // in seconds
+    val musicPlaybackDuration = MutableStateFlow(0) // in seconds
+    val isMusicLoopActive = MutableStateFlow(false)
+    val musicVolume = MutableStateFlow(1.0f) // 0f to 1f
+    val visualizerWaves = MutableStateFlow<List<Float>>(List(16) { 0.1f })
+
+    private var mediaPlayer: MediaPlayer? = null
+    private var musicJob: kotlinx.coroutines.Job? = null
+
     init {
         // Read any custom saved workspace path to initialize the repository with it
         val savedWorkspacePath = prefs.getString("custom_workspace_path", null)
         if (savedWorkspacePath != null) {
             repository.setWorkspaceDirectory(savedWorkspacePath)
         }
+
+        // Initialize user music tracks and scan files
+        refreshMusicTracks()
 
         // Pre-populate some demo templates if database is empty
         viewModelScope.launch {
@@ -539,6 +573,12 @@ class SmartMonitorViewModel(application: Application) : AndroidViewModel(applica
     fun saveFileContent(fileName: String, content: String) {
         val root = repository.getWorkspaceDirectory()
         val file = File(root, fileName)
+        if (isSystemOrProtectedPath(file.absolutePath)) {
+            viewModelScope.launch {
+                repository.log("⚠️ حظر أمني: تم منع تعديل أو الكتابة على ملفات النظام لمنع حدوث عطب في نظام التشغيل: ${file.absolutePath}", "ERROR")
+            }
+            return
+        }
         viewModelScope.launch {
             try {
                 file.parentFile?.mkdirs()
@@ -554,8 +594,14 @@ class SmartMonitorViewModel(application: Application) : AndroidViewModel(applica
 
     // Delete a workspace file/directory
     fun deleteWorkspaceFile(fileItem: FileItem) {
+        val file = File(fileItem.absolutePath)
+        if (isSystemOrProtectedPath(file.absolutePath)) {
+            viewModelScope.launch {
+                repository.log("⚠️ حظر أمني: تم منع حذف مَسار تسيير النظام لمنع تدمير أو عطب ملفات نظام التشغيل: ${fileItem.relativePath}", "ERROR")
+            }
+            return
+        }
         viewModelScope.launch {
-            val file = File(fileItem.absolutePath)
             if (file.exists()) {
                 val success = file.deleteRecursively()
                 if (success) {
@@ -1062,6 +1108,386 @@ print("🚀 تم إنهاء مهام الملحق بنجاح تام!")
             tts?.shutdown()
         } catch (e: Exception) {
             e.printStackTrace()
+        }
+        try {
+            stopMusicProgressJob()
+            mediaPlayer?.stop()
+            mediaPlayer?.release()
+            mediaPlayer = null
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    // Protection validation logic to prevent critical OS file corruption
+    fun isSystemOrProtectedPath(path: String): Boolean {
+        val clean = java.io.File(path).absolutePath
+        val protectedPrefixes = listOf(
+            "/system",
+            "/vendor",
+            "/apex",
+            "/proc",
+            "/sys",
+            "/dev",
+            "/sbin",
+            "/etc",
+            "/bin",
+            "/usr",
+            "/var",
+            "/lib",
+            "/metadata",
+            "/odm",
+            "/product",
+            "/oem"
+        )
+        
+        // Critical block on absolute root deletion/modification
+        if (clean == "/") return true
+        
+        for (prefix in protectedPrefixes) {
+            if (clean.equals(prefix, ignoreCase = true) || clean.startsWith(prefix + "/", ignoreCase = true)) {
+                return true
+            }
+        }
+        
+        // Block external storage core system storage
+        if (clean.equals("/storage/emulated/0/Android", ignoreCase = true) || clean.startsWith("/storage/emulated/0/Android/", ignoreCase = true)) {
+            return true
+        }
+        
+        return false
+    }
+
+    // Check full read/write storage permission state
+    fun hasFullStoragePermission(context: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            val read = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
+            val write = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
+            read && write
+        }
+    }
+
+    // Launch settings to grant full storage access manually
+    fun requestFullStoragePermission(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+                viewModelScope.launch {
+                    repository.log("⚙️ تم توجيه المستخدم لصفحة ضبط ملفات النظام لمنح تطبيقنا كامل الصلاحيات لتصفح وكتابة الملفات يدوياً.", "INFO")
+                }
+            } catch (e: Exception) {
+                try {
+                    val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(intent)
+                } catch (e2: Exception) {
+                    viewModelScope.launch {
+                        repository.log("❌ فشل فتح إعدادات صلاحية إدارة الملفات الكلية: ${e2.message}", "ERROR")
+                    }
+                }
+            }
+        } else {
+            try {
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+                viewModelScope.launch {
+                    repository.log("⚙️ تم فتح صفحة معلومات التطبيق للتصريح بصلاحيات التخزين العادية يدوياً.", "INFO")
+                }
+            } catch (e: Exception) {
+                viewModelScope.launch {
+                    repository.log("❌ فشل فتح إعدادات التطبيق: ${e.message}", "ERROR")
+                }
+            }
+        }
+    }
+
+    // --- Evidence Music & Zamil Player System Core Functions ---
+    fun refreshMusicTracks() {
+        val list = mutableListOf<AudioTrack>()
+        
+        // Accurate user-defined tracks corresponding to the uploaded files
+        val defaultFiles = listOf(
+            "🪖 موسيقى الأدلة – نسخة متوازنة (Balanced Instrumental Zāmil).mp3",
+            "🪖 موسيقى الأدلة – نسخة متوازنة (Balanced Instrumental Zāmil) (1).mp3",
+            "خطة التنفيذ.mp3",
+            "خطة التنفيذ (1).mp3",
+            "خطة تنفيذ محكمة.mp3"
+        )
+        
+        val activeRoot = repository.getWorkspaceDirectory()
+        defaultFiles.forEach { name ->
+            val wFile = File(activeRoot, name)
+            // Look also in "/" direct container root as fallback
+            val rootFile = File("/", name)
+            
+            if (wFile.exists() && wFile.length() > 0) {
+                list.add(AudioTrack(name = name.removeSuffix(".mp3"), fileName = name, isAsset = false, absolutePath = wFile.absolutePath, isSimulation = false))
+            } else if (rootFile.exists() && rootFile.length() > 0) {
+                list.add(AudioTrack(name = name.removeSuffix(".mp3"), fileName = name, isAsset = false, absolutePath = rootFile.absolutePath, isSimulation = false))
+            } else {
+                // Empty files on container or not found -> enable simulation mode
+                list.add(AudioTrack(name = name.removeSuffix(".mp3"), fileName = name, isAsset = false, absolutePath = wFile.absolutePath, isSimulation = true))
+            }
+        }
+        
+        // Look for any other MP3s in workspace
+        try {
+            if (activeRoot.exists() && activeRoot.isDirectory) {
+                activeRoot.listFiles()?.forEach { file ->
+                    if (file.isFile && file.name.endsWith(".mp3", ignoreCase = true) && !defaultFiles.contains(file.name)) {
+                        list.add(AudioTrack(
+                            name = "🎵 " + file.name.removeSuffix(".mp3"),
+                            fileName = file.name,
+                            isAsset = false,
+                            absolutePath = file.absolutePath,
+                            isSimulation = file.length() == 0L
+                        ))
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        
+        musicTracks.value = list
+    }
+
+    fun playTrack(track: AudioTrack) {
+        viewModelScope.launch {
+            repository.log("🎧 جاري تشغيل: ${track.name}...", "INFO")
+        }
+        stopMusicProgressJob()
+        try {
+            mediaPlayer?.stop()
+            mediaPlayer?.release()
+            mediaPlayer = null
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        
+        currentPlayingTrack.value = track
+        
+        if (track.isSimulation) {
+            isMusicPlaying.value = true
+            musicPlaybackDuration.value = 180
+            musicPlaybackPosition.value = 0
+            startMusicSimulationJob(track)
+            return
+        }
+        
+        try {
+            val mp = MediaPlayer().apply {
+                setDataSource(track.absolutePath)
+                setVolume(musicVolume.value, musicVolume.value)
+                isLooping = isMusicLoopActive.value
+                prepare()
+                start()
+            }
+            mediaPlayer = mp
+            isMusicPlaying.value = true
+            musicPlaybackDuration.value = mp.duration / 1000
+            musicPlaybackPosition.value = 0
+            
+            startRealMusicProgressJob()
+            viewModelScope.launch {
+                repository.log("🔊 تشغيل حي للملف الصوتي: ${track.name}", "SUCCESS")
+            }
+        } catch (e: Exception) {
+            viewModelScope.launch {
+                repository.log("⚠️ تعذر تشغيل الصوت الحي لملف غير ممهد. تم التحويل التلقائي لمحاكي دمج الصوت والـ TTS: ${track.name}", "WARN")
+            }
+            isMusicPlaying.value = true
+            musicPlaybackDuration.value = 150
+            musicPlaybackPosition.value = 0
+            startMusicSimulationJob(track)
+        }
+    }
+
+    fun pauseTrack() {
+        isMusicPlaying.value = false
+        stopMusicProgressJob()
+        try {
+            if (mediaPlayer?.isPlaying == true) {
+                mediaPlayer?.pause()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        viewModelScope.launch {
+            repository.log("⏸️ تم الإيقاف المؤقت للمسار الصوتي.", "INFO")
+        }
+    }
+
+    fun resumeTrack() {
+        val track = currentPlayingTrack.value ?: return
+        isMusicPlaying.value = true
+        if (track.isSimulation) {
+            startMusicSimulationJob(track)
+            return
+        }
+        try {
+            mediaPlayer?.start()
+            startRealMusicProgressJob()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            startMusicSimulationJob(track)
+        }
+        viewModelScope.launch {
+            repository.log("▶️ تم استئناف المقطع الصوتي.", "INFO")
+        }
+    }
+
+    fun stopTrack() {
+        isMusicPlaying.value = false
+        stopMusicProgressJob()
+        try {
+            mediaPlayer?.stop()
+            mediaPlayer?.release()
+            mediaPlayer = null
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        musicPlaybackPosition.value = 0
+        currentPlayingTrack.value = null
+        visualizerWaves.value = List(16) { 0.1f }
+        viewModelScope.launch {
+            repository.log("⏹️ تم إيقاف المسار الصوتي وتحرير المشغل.", "INFO")
+        }
+    }
+
+    fun seekTo(seconds: Int) {
+        val track = currentPlayingTrack.value ?: return
+        musicPlaybackPosition.value = seconds
+        if (!track.isSimulation) {
+            try {
+                mediaPlayer?.seekTo(seconds * 1000)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    fun toggleMute() {
+        isMuted.value = !isMuted.value
+        val vol = if (isMuted.value) 0f else musicVolume.value
+        try {
+            mediaPlayer?.setVolume(vol, vol)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun toggleLoop() {
+        isMusicLoopActive.value = !isMusicLoopActive.value
+        try {
+            mediaPlayer?.isLooping = isMusicLoopActive.value
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun setMusicVolume(vol: Float) {
+        musicVolume.value = vol
+        if (!isMuted.value) {
+            try {
+                mediaPlayer?.setVolume(vol, vol)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    val isMuted = MutableStateFlow(false)
+
+    private fun stopMusicProgressJob() {
+        musicJob?.cancel()
+        musicJob = null
+    }
+
+    private fun startRealMusicProgressJob() {
+        musicJob = viewModelScope.launch(Dispatchers.Main) {
+            while (isMusicPlaying.value) {
+                delay(1000)
+                mediaPlayer?.let { mp ->
+                    try {
+                        if (mp.isPlaying) {
+                            musicPlaybackPosition.value = mp.currentPosition / 1000
+                            val pos = musicPlaybackPosition.value
+                            val newWaves = List(16) { (0.2f + Math.sin((pos.toDouble() + it.toDouble()) * 0.5).toFloat() * 0.6f + (0..10).random() / 30f).coerceIn(0.1f, 1f) }
+                            visualizerWaves.value = newWaves
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun startMusicSimulationJob(track: AudioTrack) {
+        musicJob = viewModelScope.launch(Dispatchers.Main) {
+            speakEncouragingWord("أهلاً بك يا مهندس! سأقوم بمرافقتك وقراءة هذا المسار الصوتي بذكاء: ${track.name}")
+            while (isMusicPlaying.value) {
+                delay(1000)
+                val currentPos = musicPlaybackPosition.value
+                val duration = musicPlaybackDuration.value
+                if (currentPos < duration) {
+                    musicPlaybackPosition.value = currentPos + 1
+                    val newWaves = List(16) { (0.2f + Math.sin((currentPos.toDouble() + it.toDouble()) * 0.5).toFloat() * 0.6f + (0..10).random() / 30f).coerceIn(0.1f, 1f) }
+                    visualizerWaves.value = newWaves
+
+                    if (currentPos % 30 == 0 && currentPos > 0) {
+                        val lyric = getLyricForTrackAndSecond(track.name, currentPos)
+                        speakEncouragingWord(lyric)
+                    }
+                } else {
+                    if (isMusicLoopActive.value) {
+                        musicPlaybackPosition.value = 0
+                    } else {
+                        isMusicPlaying.value = false
+                    }
+                }
+            }
+        }
+    }
+
+    fun getLyricForTrackAndSecond(trackName: String, second: Int): String {
+        return when {
+            trackName.contains("موسيقى") || trackName.contains("Zāmil") || trackName.contains("متوازنة") -> {
+                when (second / 30 % 4) {
+                    0 -> "هذا مطلع المجد والبرمجة الأبية! واثقو الخطى نحو الريادة البرمجية!"
+                    1 -> "ندعم المترجم، نتابع الحافظة، وننشئ قوالب الأدلة والترتيبات لغدٍ مشرق!"
+                    2 -> "بالبناء والهمة العالية، نجمع حزم الأكواد لخدمة أبطال البناء رفقاء الحوار!"
+                    else -> "عزيمتنا صلبة، وكودنا خالٍ من العيوب وسهل الوصول في كل الأوقات!"
+                }
+            }
+            trackName.contains("خطة") || trackName.contains("خطة التنفيذ") || trackName.contains("محكمة") -> {
+                when (second / 30 % 4) {
+                    0 -> "خطة التنفيذ الميدانية: سنرتب الملفات ونكشف التوجيهات فورياً!"
+                    1 -> "انتهت مرحلة التخطيط والآن بدأ البناء الشامل لكل مفاصل التعليمات!"
+                    2 -> "مراقبة الحافظة نشطة وتنبيهات الكود ترسل مباشرة لمنصة العمل والتحقق!"
+                    else -> "أركان النظام متماسكة والفقاعة العائمة تفتح بوابات الأوامر من هاتفكم مباشرةً!"
+                }
+            }
+            else -> {
+                "مستمرون بالبناء والإنتاج الفوري وتأكيد المعالجة بنجاح متميز!"
+            }
         }
     }
 }
